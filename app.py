@@ -406,38 +406,7 @@ econ_rows, overall_position, prize_available, calculated_rtp = compute_economics
 # DISPLAY
 # ===================================================================
 
-# Key metrics row
-st.markdown("---")
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-
 net_rev = price_point * (1 - platform_take) - paypal_fee
-with c1:
-    st.metric("Pass Price", f"\u00a3{price_point:.2f}")
-with c2:
-    st.metric("Net Rev / Paid User", f"\u00a3{net_rev:.2f}")
-with c3:
-    st.metric("RTP (Target)", f"{target_rtp*100:.0f}%")
-with c4:
-    rtp_delta = calculated_rtp - (target_rtp * 100)
-    st.metric(
-        "RTP (Actual)",
-        f"{calculated_rtp:.0f}%",
-        delta=f"{rtp_delta:+.0f}% vs target",
-        delta_color="inverse" if calculated_rtp > target_rtp * 100 else "normal",
-        help="Calculated from current prize schedule. Lower is better for the business."
-    )
-with c5:
-    if is_revised:
-        st.metric("Hit Rate", f"1 in {cycle_length}")
-    else:
-        st.metric("Hit Rate", "Variable")
-with c6:
-    st.metric(
-        "Overall Position",
-        f"\u00a3{overall_position:.2f}",
-        delta="Profit" if overall_position >= 0 else "Loss",
-        delta_color="normal" if overall_position >= 0 else "inverse",
-    )
 
 # Battle pass table - EDITABLE
 st.markdown("---")
@@ -484,6 +453,37 @@ for i, row in edited_df.iterrows():
 
 results = compute_model_from_df(recalc_df, params)
 econ_rows, overall_position, prize_available, calculated_rtp = compute_economics(results, params)
+
+# Key metrics row (placed AFTER recalculation so it reflects table edits)
+st.markdown("---")
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+with c1:
+    st.metric("Pass Price", f"\u00a3{price_point:.2f}")
+with c2:
+    st.metric("Net Rev / Paid User", f"\u00a3{net_rev:.2f}")
+with c3:
+    st.metric("RTP (Target)", f"{target_rtp*100:.0f}%")
+with c4:
+    rtp_delta = calculated_rtp - (target_rtp * 100)
+    st.metric(
+        "RTP (Actual)",
+        f"{calculated_rtp:.0f}%",
+        delta=f"{rtp_delta:+.0f}% vs target",
+        delta_color="inverse" if calculated_rtp > target_rtp * 100 else "normal",
+        help="Calculated from current prize schedule. Lower is better for the business."
+    )
+with c5:
+    if is_revised:
+        st.metric("Hit Rate", f"1 in {cycle_length}")
+    else:
+        st.metric("Hit Rate", "Variable")
+with c6:
+    st.metric(
+        "Overall Position",
+        f"\u00a3{overall_position:.2f}",
+        delta="Profit" if overall_position >= 0 else "Loss",
+        delta_color="normal" if overall_position >= 0 else "inverse",
+    )
 
 # Handle save button click
 if save_clicked and save_name.strip():
@@ -554,8 +554,8 @@ recalc_display = pd.DataFrame([{
     "Win % (eff.)": f"{r['win_chance_effective']*100:.1f}%",
     "Free Prize": f"\u00a3{r['free_prize']:.2f}" if r["type"] != "Sweepstakes" else f"\u00a3{r.get('sweep_amt', 0):,.0f} sweep",
     "Paid Prize": f"\u00a3{r['paid_prize']:.2f}" if r["type"] != "Sweepstakes" else f"\u00a3{r.get('sweep_amt', 0):,.0f} sweep",
-    "EV Free": f"\u00a3{r['ev_free']:.4f}",
-    "EV Paid": f"\u00a3{r['ev_paid']:.4f}",
+    "EV Free": f"\u00a3{r['ev_free']:.2f}",
+    "EV Paid": f"\u00a3{r['ev_paid']:.2f}",
     "Wallet (Free Eng)": f"\u00a3{r['w_fe']:.2f}",
     "Wallet (Paid Eng)": f"\u00a3{r['w_pe']:.2f}",
 } for r in results])
@@ -587,56 +587,6 @@ with rtp_col3:
         st.metric("RTP Gap", f"{rtp_gap:+.0f}%", delta="Slightly over target", delta_color="inverse")
     else:
         st.metric("RTP Gap", f"{rtp_gap:+.0f}%", delta="At or below target", delta_color="normal")
-
-# Quick comparison for revised / saved mode
-if is_revised:
-    st.markdown("---")
-    st.subheader("Quick Comparison: Current vs Revised")
-
-    # Run current model for comparison
-    current_base_df = pd.DataFrame(CURRENT_STEPS)
-    current_params = {**params, "price_point": 4.99, "min_odds": 0.0}
-    current_results = compute_model_from_df(current_base_df, current_params)
-    current_econ, current_overall, _, current_calc_rtp = compute_economics(current_results, current_params)
-
-    comp_c1, comp_c2, comp_c3 = st.columns(3)
-    with comp_c1:
-        st.metric(
-            "Current Overall Position",
-            f"\u00a3{current_overall:.2f}",
-        )
-    with comp_c2:
-        st.metric(
-            "Revised Overall Position",
-            f"\u00a3{overall_position:.2f}",
-        )
-    with comp_c3:
-        delta = overall_position - current_overall
-        st.metric(
-            "Improvement",
-            f"\u00a3{delta:.2f}",
-            delta=f"\u00a3{delta:.2f}",
-            delta_color="normal" if delta >= 0 else "inverse",
-        )
-
-    # Wallet comparison
-    current_paid_eng_wallet = current_results[-1]["w_pe"]
-    revised_paid_eng_wallet = results[-1]["w_pe"]
-
-    comp_c4, comp_c5, comp_c6 = st.columns(3)
-    with comp_c4:
-        st.metric("Current Paid Eng. Wallet", f"\u00a3{current_paid_eng_wallet:.2f}")
-    with comp_c5:
-        st.metric("Revised Paid Eng. Wallet", f"\u00a3{revised_paid_eng_wallet:.2f}")
-    with comp_c6:
-        wallet_delta = revised_paid_eng_wallet - current_paid_eng_wallet
-        st.metric(
-            "Wallet Change",
-            f"\u00a3{wallet_delta:.2f}",
-            delta=f"\u00a3{wallet_delta:.2f}",
-            delta_color="inverse" if wallet_delta > 0 else "normal",  # Lower wallet = better for house
-        )
-
 
 # ===================================================================
 # CHARTS
@@ -726,72 +676,6 @@ fig_prize.update_layout(
 )
 fig_prize.update_yaxes(title_text="Prize Value (\u00a3)", secondary_y=False)
 st.plotly_chart(fig_prize, use_container_width=True)
-
-
-# ===================================================================
-# WEEK 1 / WEEK 2 ANALYSIS
-# ===================================================================
-st.markdown("---")
-st.subheader("Week 1 vs Week 2 Economics")
-st.caption("Based on session counts: Week 1 = sessions reachable in ~7 days")
-
-# Estimate week 1 boundary: engaged player at ~7 sessions
-# From the data, sess_eng goes 1,1,1,1,1,1,2,2,2,3,4,4,4,5...
-# Cumulative sessions for engaged player
-cum_sessions = 0
-week1_boundary = len(results)  # Default to all steps
-for i, r in enumerate(results):
-    cum_sessions += r["sess_eng"]
-    if cum_sessions > 7:
-        week1_boundary = i
-        break
-
-week1_steps = results[:week1_boundary]
-week2_steps = results[week1_boundary:]
-
-if week1_steps:
-    w1_wallet_paid = week1_steps[-1]["w_pe"]
-    w1_wallet_free = week1_steps[-1]["w_fe"]
-else:
-    w1_wallet_paid = 0
-    w1_wallet_free = 0
-
-w2_wallet_paid = results[-1]["w_pe"] - w1_wallet_paid if week2_steps else 0
-w2_wallet_free = results[-1]["w_fe"] - w1_wallet_free if week2_steps else 0
-
-wk_c1, wk_c2, wk_c3, wk_c4 = st.columns(4)
-with wk_c1:
-    st.metric("Week 1 Steps", len(week1_steps))
-with wk_c2:
-    st.metric("Week 1 Paid Wallet", f"\u00a3{w1_wallet_paid:.2f}")
-with wk_c3:
-    st.metric("Week 2 Steps", len(week2_steps))
-with wk_c4:
-    st.metric("Week 2 Paid Wallet Added", f"\u00a3{w2_wallet_paid:.2f}")
-
-# Week 1 P&L
-w1_income = price_point * (paid_median_pct + paid_engaged_pct) / 100
-w1_net_income = w1_income * (1 - platform_take) - paypal_fee * (paid_median_pct + paid_engaged_pct) / 100
-w1_payout = (w1_wallet_free * (1 - retention_free) * (free_median_pct + free_engaged_pct) / 100 +
-             w1_wallet_paid * (1 - retention_paid) * (paid_median_pct + paid_engaged_pct) / 100)
-w1_net = w1_net_income - w1_payout
-
-wk_c5, wk_c6, wk_c7 = st.columns(3)
-with wk_c5:
-    st.metric("Week 1 Blended Income", f"\u00a3{w1_net_income:.2f}")
-with wk_c6:
-    st.metric("Week 1 Blended Payout", f"\u00a3{w1_payout:.2f}")
-with wk_c7:
-    st.metric(
-        "Week 1 Net",
-        f"\u00a3{w1_net:.2f}",
-        delta="Profit" if w1_net >= 0 else "Loss",
-        delta_color="normal" if w1_net >= 0 else "inverse",
-    )
-
-if w1_net_income > 0:
-    w1_loss_pct = (w1_net / w1_net_income) * 100
-    st.info(f"Week 1 loss as % of income: **{w1_loss_pct:.1f}%** (Fengxing target: manageable at ~10%)")
 
 
 st.markdown("---")
