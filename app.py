@@ -355,45 +355,32 @@ st.markdown("---")
 st.subheader("Battle Pass Steps (edit values below)")
 st.caption("Change any Win %, Free Prize, or Paid Prize value and the economics will recalculate automatically.")
 
-# Prepare editable columns
+# Prepare editable columns (only show editable fields + context)
 edit_df = pd.DataFrame([{
     "Step": r["step"],
     "Level": r.get("level", ""),
     "Tickets": r["tickets"],
     "Type": r["type"],
     "Win % (input)": r["win_chance"] * 100,
-    "Win % (effective)": r["win_chance_effective"] * 100,
     "Free Prize": r["free_prize"] if r["type"] != "Sweepstakes" else 0.0,
     "Paid Prize": r["paid_prize"] if r["type"] != "Sweepstakes" else 0.0,
-    "Sweep Amt": r.get("sweep_amt", 0),
-    "EV Free": r["ev_free"],
-    "EV Paid": r["ev_paid"],
-    "Wallet (Free Eng)": r["w_fe"],
-    "Wallet (Paid Eng)": r["w_pe"],
 } for r in results])
 
 # Let user edit the key columns
+st.caption("Edit **Win %**, **Free Prize**, and **Paid Prize** below. The results table underneath will update automatically.")
 edited_df = st.data_editor(
     edit_df,
     use_container_width=True,
     hide_index=True,
-    disabled=["Step", "Level", "Tickets", "Type", "Win % (effective)", "Sweep Amt",
-              "EV Free", "EV Paid", "Wallet (Free Eng)", "Wallet (Paid Eng)"],
+    disabled=["Step", "Level", "Tickets", "Type"],
     column_config={
         "Step": st.column_config.NumberColumn("Step", width="small"),
         "Level": st.column_config.NumberColumn("Level", width="small"),
         "Tickets": st.column_config.NumberColumn("Tickets", format="%d"),
-        "Win % (input)": st.column_config.NumberColumn("Win % (input)", min_value=0, max_value=100, step=0.5, format="%.1f%%",
-            help="Set your desired win chance. The effective % applies the regulatory minimum."),
-        "Win % (effective)": st.column_config.NumberColumn("Win % (eff.)", format="%.1f%%",
-            help="After applying minimum odds floor"),
+        "Win % (input)": st.column_config.NumberColumn("Win %", min_value=0, max_value=100, step=0.5, format="%.1f%%",
+            help="Set your desired win chance. Values below the regulatory minimum will be bumped up automatically."),
         "Free Prize": st.column_config.NumberColumn("Free Prize", min_value=0, max_value=100, step=0.25, format="\u00a3%.2f"),
         "Paid Prize": st.column_config.NumberColumn("Paid Prize", min_value=0, max_value=200, step=0.25, format="\u00a3%.2f"),
-        "Sweep Amt": st.column_config.NumberColumn("Sweep", format="\u00a3%d"),
-        "EV Free": st.column_config.NumberColumn("EV Free", format="\u00a3%.2f"),
-        "EV Paid": st.column_config.NumberColumn("EV Paid", format="\u00a3%.2f"),
-        "Wallet (Free Eng)": st.column_config.NumberColumn("Wallet (Free)", format="\u00a3%.2f"),
-        "Wallet (Paid Eng)": st.column_config.NumberColumn("Wallet (Paid)", format="\u00a3%.2f"),
     },
     key="step_editor",
 )
@@ -408,6 +395,24 @@ for i, row in edited_df.iterrows():
 
 results = compute_model_from_df(recalc_df, params)
 econ_rows, overall_position, prize_available, calculated_rtp = compute_economics(results, params)
+
+# Show recalculated results table
+st.markdown("---")
+st.subheader("Recalculated Step Economics")
+st.caption("These values reflect your edits above and update automatically.")
+
+recalc_display = pd.DataFrame([{
+    "Step": r["step"],
+    "Type": r["type"],
+    "Win % (eff.)": f"{r['win_chance_effective']*100:.1f}%",
+    "Free Prize": f"\u00a3{r['free_prize']:.2f}" if r["type"] != "Sweepstakes" else f"\u00a3{r.get('sweep_amt', 0):,.0f} sweep",
+    "Paid Prize": f"\u00a3{r['paid_prize']:.2f}" if r["type"] != "Sweepstakes" else f"\u00a3{r.get('sweep_amt', 0):,.0f} sweep",
+    "EV Free": f"\u00a3{r['ev_free']:.4f}",
+    "EV Paid": f"\u00a3{r['ev_paid']:.4f}",
+    "Wallet (Free Eng)": f"\u00a3{r['w_fe']:.2f}",
+    "Wallet (Paid Eng)": f"\u00a3{r['w_pe']:.2f}",
+} for r in results])
+st.dataframe(recalc_display, use_container_width=True, hide_index=True)
 
 # Economics table
 st.markdown("---")
