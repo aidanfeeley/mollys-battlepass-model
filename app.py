@@ -105,13 +105,18 @@ with export_col:
 with import_col:
     uploaded = st.file_uploader("Import", type="json", label_visibility="collapsed", key="import_file")
     if uploaded is not None:
-        try:
-            imported = json.loads(uploaded.read())
-            st.session_state.saved_models.update(imported)
-            st.sidebar.success(f"Imported {len(imported)} model(s)")
-            st.rerun()
-        except json.JSONDecodeError:
-            st.sidebar.error("Invalid JSON file")
+        # Track whether we've already processed this exact file to avoid re-importing on every rerun
+        file_hash = hash(uploaded.name + str(uploaded.size))
+        if st.session_state.get("_last_import_hash") != file_hash:
+            try:
+                raw = uploaded.read()
+                imported = json.loads(raw)
+                if imported and isinstance(imported, dict):
+                    st.session_state.saved_models.update(imported)  # Overwrite existing models with same name
+                    st.session_state["_last_import_hash"] = file_hash
+                    st.sidebar.success(f"Imported {len(imported)} model(s)")
+            except (json.JSONDecodeError, Exception) as e:
+                st.sidebar.error(f"Invalid JSON file: {e}")
 
 st.sidebar.markdown("---")
 st.sidebar.header("Economics")
