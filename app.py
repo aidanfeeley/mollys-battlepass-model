@@ -3,10 +3,17 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import json
 
 st.set_page_config(page_title="Molly's Cash Battle Pass Model", layout="wide")
 st.title("Molly's Cash Battle Pass Model")
 st.caption("Interactive model for tuning battle pass economics")
+
+# ===================================================================
+# SAVED MODELS (session state)
+# ===================================================================
+if "saved_models" not in st.session_state:
+    st.session_state.saved_models = {}
 
 # ===================================================================
 # CURRENT MODEL DATA (exact match to their spreadsheet)
@@ -48,44 +55,107 @@ CURRENT_STEPS = [
 # SIDEBAR CONTROLS
 # ===================================================================
 
+# Model selector: built-in modes + any saved models
+saved_names = list(st.session_state.saved_models.keys())
+mode_options = ["Current Model", "Revised Model"] + saved_names
+
 model_mode = st.sidebar.radio(
     "Model Mode",
-    ["Current Model", "Revised Model"],
+    mode_options,
     index=1,
-    help="Current = existing spreadsheet values. Revised = apply Fengxing's feedback."
+    help="Current = existing spreadsheet values. Revised = apply Fengxing's feedback. Saved models appear below."
 )
+
+# Determine if we're loading a saved model
+is_saved = model_mode in st.session_state.saved_models
+saved = st.session_state.saved_models.get(model_mode, {}) if is_saved else {}
+is_revised = model_mode == "Revised Model" or is_saved  # Saved models use revised structure
+
+# --- Save / Load / Export / Import ---
+st.sidebar.markdown("---")
+st.sidebar.header("Save & Load")
+
+save_col1, save_col2 = st.sidebar.columns(2)
+with save_col1:
+    save_name = st.text_input("Model name", key="save_name_input", label_visibility="collapsed", placeholder="Name your model...")
+with save_col2:
+    save_clicked = st.button("Save", use_container_width=True)
+
+# Delete saved model
+if is_saved:
+    if st.sidebar.button(f"Delete '{model_mode}'", use_container_width=True):
+        del st.session_state.saved_models[model_mode]
+        st.rerun()
+
+# Export / Import
+st.sidebar.markdown("---")
+export_col, import_col = st.sidebar.columns(2)
+
+with export_col:
+    if st.session_state.saved_models:
+        export_data = json.dumps(st.session_state.saved_models, indent=2)
+        st.download_button(
+            "Export All",
+            data=export_data,
+            file_name="battlepass_models.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+
+with import_col:
+    uploaded = st.file_uploader("Import", type="json", label_visibility="collapsed", key="import_file")
+    if uploaded is not None:
+        try:
+            imported = json.loads(uploaded.read())
+            st.session_state.saved_models.update(imported)
+            st.sidebar.success(f"Imported {len(imported)} model(s)")
+            st.rerun()
+        except json.JSONDecodeError:
+            st.sidebar.error("Invalid JSON file")
 
 st.sidebar.markdown("---")
 st.sidebar.header("Economics")
 
+# Get defaults: from saved model if loading, otherwise from mode
+def get_default(key, revised_val, current_val):
+    if is_saved and key in saved.get("settings", {}):
+        return saved["settings"][key]
+    return revised_val if model_mode == "Revised Model" else current_val
+
 price_point = st.sidebar.select_slider(
     "Premium Pass Price",
     options=[3.99, 4.99, 6.99, 7.99, 9.99, 12.99, 14.99],
-    value=9.99 if model_mode == "Revised Model" else 4.99,
+    value=get_default("price_point", 9.99, 4.99),
     format_func=lambda x: f"\u00a3{x:.2f}",
 )
 
 platform_take = st.sidebar.slider(
-    "Platform Take %", min_value=0, max_value=50, value=15, step=1
+    "Platform Take %", min_value=0, max_value=50,
+    value=get_default("platform_take_pct", 15, 15), step=1
 ) / 100
 
 paypal_fee = st.sidebar.number_input(
-    "PayPal Fee (\u00a3)", min_value=0.0, max_value=1.0, value=0.08, step=0.01
+    "PayPal Fee (\u00a3)", min_value=0.0, max_value=1.0,
+    value=get_default("paypal_fee", 0.08, 0.08), step=0.01
 )
 
-rtp_default = 55 if model_mode == "Revised Model" else 95
 target_rtp = st.sidebar.slider(
-    "Return to Player (RTP) %", min_value=30, max_value=95, value=rtp_default, step=5,
+    "Return to Player (RTP) %", min_value=30, max_value=95,
+    value=get_default("target_rtp_pct", 55, 95), step=5,
     help="Current model uses 95%. Fengxing recommends 50-60% for bingo-pace products."
 ) / 100
 
 st.sidebar.markdown("---")
 st.sidebar.header("Player Segments")
 
-free_median_pct = st.sidebar.slider("Free Median %", 0, 100, 50, 5)
-free_engaged_pct = st.sidebar.slider("Free Engaged %", 0, 100, 30, 5)
-paid_median_pct = st.sidebar.slider("Paid Median %", 0, 100, 5, 1)
-paid_engaged_pct = st.sidebar.slider("Paid Engaged %", 0, 100, 15, 1)
+free_median_pct = st.sidebar.slider("Free Median %", 0, 100,
+    get_default("free_median_pct", 50, 50), 5)
+free_engaged_pct = st.sidebar.slider("Free Engaged %", 0, 100,
+    get_default("free_engaged_pct", 30, 30), 5)
+paid_median_pct = st.sidebar.slider("Paid Median %", 0, 100,
+    get_default("paid_median_pct", 5, 5), 1)
+paid_engaged_pct = st.sidebar.slider("Paid Engaged %", 0, 100,
+    get_default("paid_engaged_pct", 15, 15), 1)
 
 total_pct = free_median_pct + free_engaged_pct + paid_median_pct + paid_engaged_pct
 if total_pct != 100:
@@ -95,7 +165,8 @@ st.sidebar.markdown("---")
 st.sidebar.header("Regulatory")
 
 min_odds_pct = st.sidebar.slider(
-    "Minimum Win Chance %", min_value=0.0, max_value=5.0, value=1.0, step=0.1,
+    "Minimum Win Chance %", min_value=0.0, max_value=5.0,
+    value=get_default("min_odds_pct", 1.0, 1.0), step=0.1,
     help="ContestPR: no 0% odds. Set floor to 1% (or 0.1% at higher volume)."
 )
 min_odds = min_odds_pct / 100
@@ -104,25 +175,29 @@ st.sidebar.markdown("---")
 st.sidebar.header("D7 Retention (Cashout Rate)")
 
 retention_free = st.sidebar.slider(
-    "Free Tier D7 Retention %", min_value=0, max_value=100, value=15, step=5,
+    "Free Tier D7 Retention %", min_value=0, max_value=100,
+    value=get_default("retention_free_pct", 15, 15), step=5,
     help="% of free players still active at D7 who collect winnings"
 ) / 100
 
 retention_paid = st.sidebar.slider(
-    "Paid Tier D7 Retention %", min_value=0, max_value=100, value=30, step=5,
+    "Paid Tier D7 Retention %", min_value=0, max_value=100,
+    value=get_default("retention_paid_pct", 30, 30), step=5,
     help="% of paid players still active at D7 who collect winnings"
 ) / 100
 
-# Revised model controls
-if model_mode == "Revised Model":
+# Revised / Saved model controls
+if is_revised:
     st.sidebar.markdown("---")
     st.sidebar.header("Cooldown Mechanic")
 
     win_steps = st.sidebar.number_input(
-        "Win Steps (per cycle)", min_value=1, max_value=5, value=1, step=1
+        "Win Steps (per cycle)", min_value=1, max_value=5,
+        value=get_default("win_steps", 1, 1), step=1
     )
     no_win_steps = st.sidebar.number_input(
-        "No-Win Steps (per cycle)", min_value=1, max_value=10, value=5, step=1,
+        "No-Win Steps (per cycle)", min_value=1, max_value=10,
+        value=get_default("no_win_steps", 5, 5), step=1,
         help="Fengxing: 1 win / 5 no-win = 1-in-6 hit rate"
     )
     cycle_length = win_steps + no_win_steps
@@ -131,23 +206,29 @@ if model_mode == "Revised Model":
     st.sidebar.header("Prize Tuning")
 
     prize_floor = st.sidebar.number_input(
-        "Small Win Floor (\u00a3)", min_value=0.10, max_value=1.00, value=0.25, step=0.05
+        "Small Win Floor (\u00a3)", min_value=0.10, max_value=1.00,
+        value=get_default("prize_floor", 0.25, 0.25), step=0.05
     )
     prize_ceiling_small = st.sidebar.number_input(
-        "Small Win Ceiling (\u00a3)", min_value=0.25, max_value=2.00, value=0.50, step=0.05
+        "Small Win Ceiling (\u00a3)", min_value=0.25, max_value=2.00,
+        value=get_default("prize_ceiling_small", 0.50, 0.50), step=0.05
     )
     prize_floor_punch = st.sidebar.number_input(
-        "Punch Win Floor (\u00a3)", min_value=0.50, max_value=5.00, value=1.00, step=0.25
+        "Punch Win Floor (\u00a3)", min_value=0.50, max_value=5.00,
+        value=get_default("prize_floor_punch", 1.00, 1.00), step=0.25
     )
     prize_ceiling_punch = st.sidebar.number_input(
-        "Punch Win Ceiling (\u00a3)", min_value=1.00, max_value=15.00, value=5.00, step=0.50
+        "Punch Win Ceiling (\u00a3)", min_value=1.00, max_value=15.00,
+        value=get_default("prize_ceiling_punch", 5.00, 5.00), step=0.50
     )
     small_win_pct = st.sidebar.slider(
-        "Small Win % (of all wins)", min_value=50, max_value=100, value=80, step=5,
+        "Small Win % (of all wins)", min_value=50, max_value=100,
+        value=get_default("small_win_pct", 80, 80), step=5,
         help="Fengxing recommends 80% small / 20% punch"
     )
     paid_multiplier = st.sidebar.slider(
-        "Paid Prize Multiplier", min_value=1.0, max_value=4.0, value=2.0, step=0.5,
+        "Paid Prize Multiplier", min_value=1.0, max_value=4.0,
+        value=get_default("paid_multiplier", 2.0, 2.0), step=0.5,
         help="Paid prize = Free prize x this multiplier"
     )
 
@@ -267,7 +348,7 @@ params = {
     "paid_engaged_pct": paid_engaged_pct,
 }
 
-if model_mode == "Revised Model":
+if is_revised:
     params.update({
         "cycle_length": cycle_length,
         "win_steps": win_steps,
@@ -283,6 +364,9 @@ if model_mode == "Revised Model":
 # Prepare the editable DataFrame
 if model_mode == "Current Model":
     base_df = pd.DataFrame(CURRENT_STEPS)
+elif is_saved and "step_data" in saved:
+    # Load step data from saved model
+    base_df = pd.DataFrame(saved["step_data"])
 else:
     # Generate revised step data using cooldown + prize structure
     revised_rows = []
@@ -338,7 +422,7 @@ with c4:
         help="Calculated from current prize schedule. Lower is better for the business."
     )
 with c5:
-    if model_mode == "Revised Model":
+    if is_revised:
         st.metric("Hit Rate", f"1 in {cycle_length}")
     else:
         st.metric("Hit Rate", "Variable")
@@ -396,6 +480,64 @@ for i, row in edited_df.iterrows():
 results = compute_model_from_df(recalc_df, params)
 econ_rows, overall_position, prize_available, calculated_rtp = compute_economics(results, params)
 
+# Handle save button click
+if save_clicked and save_name.strip():
+    # Collect current settings
+    settings_to_save = {
+        "price_point": price_point,
+        "platform_take_pct": int(platform_take * 100),
+        "paypal_fee": paypal_fee,
+        "target_rtp_pct": int(target_rtp * 100),
+        "min_odds_pct": min_odds_pct,
+        "retention_free_pct": int(retention_free * 100),
+        "retention_paid_pct": int(retention_paid * 100),
+        "free_median_pct": free_median_pct,
+        "free_engaged_pct": free_engaged_pct,
+        "paid_median_pct": paid_median_pct,
+        "paid_engaged_pct": paid_engaged_pct,
+    }
+    if is_revised:
+        settings_to_save.update({
+            "win_steps": win_steps,
+            "no_win_steps": no_win_steps,
+            "prize_floor": prize_floor,
+            "prize_ceiling_small": prize_ceiling_small,
+            "prize_floor_punch": prize_floor_punch,
+            "prize_ceiling_punch": prize_ceiling_punch,
+            "small_win_pct": small_win_pct,
+            "paid_multiplier": paid_multiplier,
+        })
+
+    # Save step data from the edited table
+    step_data = []
+    for i, row in edited_df.iterrows():
+        if i < len(base_df):
+            s = base_df.iloc[i].to_dict()
+            s["win_chance"] = row["Win % (input)"] / 100
+            s["free_prize"] = float(row["Free Prize"])
+            s["paid_prize"] = float(row["Paid Prize"])
+            # Convert any numpy/pandas types to native Python for JSON
+            clean_s = {}
+            for k, v in s.items():
+                if isinstance(v, (np.integer,)):
+                    clean_s[k] = int(v)
+                elif isinstance(v, (np.floating,)):
+                    clean_s[k] = float(v)
+                elif pd.isna(v):
+                    clean_s[k] = None
+                else:
+                    clean_s[k] = v
+            step_data.append(clean_s)
+
+    st.session_state.saved_models[save_name.strip()] = {
+        "settings": settings_to_save,
+        "step_data": step_data,
+    }
+    st.toast(f"Saved model: {save_name.strip()}")
+    st.rerun()
+elif save_clicked and not save_name.strip():
+    st.sidebar.warning("Please enter a name for your model")
+
 # Show recalculated results table
 st.markdown("---")
 st.subheader("Recalculated Step Economics")
@@ -441,8 +583,8 @@ with rtp_col3:
     else:
         st.metric("RTP Gap", f"{rtp_gap:+.0f}%", delta="At or below target", delta_color="normal")
 
-# Quick comparison for revised mode
-if model_mode == "Revised Model":
+# Quick comparison for revised / saved mode
+if is_revised:
     st.markdown("---")
     st.subheader("Quick Comparison: Current vs Revised")
 
