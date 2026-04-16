@@ -7,7 +7,8 @@ import json
 
 st.set_page_config(page_title="Molly's Cash Battle Pass Model", layout="wide")
 st.title("Molly's Cash Battle Pass Model")
-st.caption("Interactive model for tuning battle pass economics")
+st.caption("Tune win chances, prize values, and economic assumptions to model the battle pass P&L. "
+           "Edit the table directly to adjust individual steps, or use the sidebar to change global settings.")
 
 # ===================================================================
 # SAVED MODELS (session state)
@@ -20,20 +21,20 @@ if "saved_models" not in st.session_state:
 # ===================================================================
 
 CURRENT_STEPS = [
-    {"step": 1,  "level": 1,   "tickets": 50,     "sess_med": 1,    "sess_eng": 1,  "type": "Instant Win",  "win_chance": 1.00,  "free_prize": 5.00,  "paid_prize": 10.00},
-    {"step": 2,  "level": 11,  "tickets": 550,    "sess_med": 1,    "sess_eng": 1,  "type": "Instant Win",  "win_chance": 0.00,  "free_prize": 0.50,  "paid_prize": 1.00},
-    {"step": 3,  "level": 21,  "tickets": 1155,   "sess_med": 1,    "sess_eng": 1,  "type": "Instant Win",  "win_chance": 1.00,  "free_prize": 1.00,  "paid_prize": 2.00},
-    {"step": 4,  "level": 31,  "tickets": 1805,   "sess_med": 2,    "sess_eng": 1,  "type": "Instant Win",  "win_chance": 0.00,  "free_prize": 1.50,  "paid_prize": 3.00},
-    {"step": 5,  "level": 41,  "tickets": 2455,   "sess_med": 3,    "sess_eng": 1,  "type": "Instant Win",  "win_chance": 0.00,  "free_prize": 0.50,  "paid_prize": 1.00},
+    {"step": 1,  "level": 1,   "tickets": 50,     "sess_med": 1,    "sess_eng": 1,  "type": "Instant Win",  "win_chance": 1.00,  "free_prize": 0.25,  "paid_prize": 0.50},
+    {"step": 2,  "level": 11,  "tickets": 550,    "sess_med": 1,    "sess_eng": 1,  "type": "Instant Win",  "win_chance": 0.01,  "free_prize": 0.50,  "paid_prize": 1.00},
+    {"step": 3,  "level": 21,  "tickets": 1155,   "sess_med": 1,    "sess_eng": 1,  "type": "Instant Win",  "win_chance": 1.00,  "free_prize": 0.25,  "paid_prize": 0.50},
+    {"step": 4,  "level": 31,  "tickets": 1805,   "sess_med": 2,    "sess_eng": 1,  "type": "Instant Win",  "win_chance": 0.01,  "free_prize": 1.50,  "paid_prize": 3.00},
+    {"step": 5,  "level": 41,  "tickets": 2455,   "sess_med": 3,    "sess_eng": 1,  "type": "Instant Win",  "win_chance": 1.00,  "free_prize": 0.25,  "paid_prize": 0.50},
     {"step": 6,  "level": 51,  "tickets": 3105,   "sess_med": 3,    "sess_eng": 1,  "type": "Sweepstakes",  "win_chance": 0.00,  "free_prize": 0.00,  "paid_prize": 0.00,  "sweep_amt": 100},
-    {"step": 7,  "level": 61,  "tickets": 3755,   "sess_med": 4,    "sess_eng": 2,  "type": "Instant Win",  "win_chance": 0.00,  "free_prize": 1.50,  "paid_prize": 3.00},
-    {"step": 8,  "level": 72,  "tickets": 4470,   "sess_med": 5,    "sess_eng": 2,  "type": "Instant Win",  "win_chance": 1.00,  "free_prize": 0.50,  "paid_prize": 1.00},
-    {"step": 9,  "level": 83,  "tickets": 5185,   "sess_med": 6,    "sess_eng": 2,  "type": "Instant Win",  "win_chance": 0.00,  "free_prize": 0.50,  "paid_prize": 1.00},
-    {"step": 10, "level": 94,  "tickets": 5900,   "sess_med": 7,    "sess_eng": 3,  "type": "Instant Win",  "win_chance": 0.00,  "free_prize": 1.00,  "paid_prize": 2.00},
+    {"step": 7,  "level": 61,  "tickets": 3755,   "sess_med": 4,    "sess_eng": 2,  "type": "Instant Win",  "win_chance": 0.01,  "free_prize": 1.50,  "paid_prize": 3.00},
+    {"step": 8,  "level": 72,  "tickets": 4470,   "sess_med": 5,    "sess_eng": 2,  "type": "Instant Win",  "win_chance": 1.00,  "free_prize": 0.25,  "paid_prize": 0.50},
+    {"step": 9,  "level": 83,  "tickets": 5185,   "sess_med": 6,    "sess_eng": 2,  "type": "Instant Win",  "win_chance": 0.01,  "free_prize": 0.50,  "paid_prize": 1.00},
+    {"step": 10, "level": 94,  "tickets": 5900,   "sess_med": 7,    "sess_eng": 3,  "type": "Instant Win",  "win_chance": 1.00,  "free_prize": 0.25,  "paid_prize": 0.50},
     {"step": 11, "level": 105, "tickets": 6615,   "sess_med": 8,    "sess_eng": 4,  "type": "Sweepstakes",  "win_chance": 0.00,  "free_prize": 0.00,  "paid_prize": 0.00,  "sweep_amt": 1000},
-    {"step": 12, "level": 116, "tickets": 7330,   "sess_med": 9,    "sess_eng": 4,  "type": "Instant Win",  "win_chance": 0.00,  "free_prize": 0.50,  "paid_prize": 1.00},
-    {"step": 13, "level": 127, "tickets": 8045,   "sess_med": 10,   "sess_eng": 4,  "type": "Instant Win",  "win_chance": 0.00,  "free_prize": 1.50,  "paid_prize": 3.00},
-    {"step": 14, "level": 138, "tickets": 8760,   "sess_med": 10,   "sess_eng": 5,  "type": "Instant Win",  "win_chance": 1.00,  "free_prize": 1.00,  "paid_prize": 2.00},
+    {"step": 12, "level": 116, "tickets": 7330,   "sess_med": 9,    "sess_eng": 4,  "type": "Instant Win",  "win_chance": 0.01,  "free_prize": 0.50,  "paid_prize": 1.00},
+    {"step": 13, "level": 127, "tickets": 8045,   "sess_med": 10,   "sess_eng": 4,  "type": "Instant Win",  "win_chance": 0.01,  "free_prize": 1.50,  "paid_prize": 3.00},
+    {"step": 14, "level": 138, "tickets": 8760,   "sess_med": 10,   "sess_eng": 5,  "type": "Instant Win",  "win_chance": 1.00,  "free_prize": 0.25,  "paid_prize": 0.50},
     {"step": 15, "level": 149, "tickets": 9695,   "sess_med": None,  "sess_eng": 5,  "type": "Instant Win",  "win_chance": 0.25,  "free_prize": 0.50,  "paid_prize": 1.00},
     {"step": 16, "level": 160, "tickets": 10630,  "sess_med": None,  "sess_eng": 6,  "type": "Instant Win",  "win_chance": 0.20,  "free_prize": 1.50,  "paid_prize": 3.00},
     {"step": 17, "level": 172, "tickets": 11650,  "sess_med": None,  "sess_eng": 6,  "type": "Sweepstakes",  "win_chance": 0.00,  "free_prize": 0.00,  "paid_prize": 0.00,  "sweep_amt": 10000},
@@ -114,7 +115,7 @@ with import_col:
                 if imported and isinstance(imported, dict):
                     st.session_state.saved_models.update(imported)  # Overwrite existing models with same name
                     st.session_state["_last_import_hash"] = file_hash
-                    st.sidebar.success(f"Imported {len(imported)} model(s)")
+                    st.rerun()  # Safe to rerun here — hash guard prevents infinite loop
             except (json.JSONDecodeError, Exception) as e:
                 st.sidebar.error(f"Invalid JSON file: {e}")
 
@@ -145,9 +146,9 @@ paypal_fee = st.sidebar.number_input(
 )
 
 target_rtp = st.sidebar.slider(
-    "Return to Player (RTP) %", min_value=30, max_value=95,
+    "Target RTP %", min_value=30, max_value=95,
     value=get_default("target_rtp_pct", 55, 95), step=5,
-    help="Current model uses 95%. Fengxing recommends 50-60% for bingo-pace products."
+    help="Fengxing recommends 50-60% for bingo-pace products."
 ) / 100
 
 st.sidebar.markdown("---")
@@ -165,16 +166,6 @@ paid_engaged_pct = st.sidebar.slider("Paid Engaged %", 0, 100,
 total_pct = free_median_pct + free_engaged_pct + paid_median_pct + paid_engaged_pct
 if total_pct != 100:
     st.sidebar.warning(f"Segments sum to {total_pct}%, should be 100%")
-
-st.sidebar.markdown("---")
-st.sidebar.header("Regulatory")
-
-min_odds_pct = st.sidebar.slider(
-    "Minimum Win Chance %", min_value=0.0, max_value=5.0,
-    value=get_default("min_odds_pct", 1.0, 1.0), step=0.1,
-    help="ContestPR: no 0% odds. Set floor to 1% (or 0.1% at higher volume)."
-)
-min_odds = min_odds_pct / 100
 
 st.sidebar.markdown("---")
 st.sidebar.header("D7 Retention (Cashout Rate)")
@@ -202,39 +193,16 @@ if is_revised:
     )
     no_win_steps = st.sidebar.number_input(
         "No-Win Steps (per cycle)", min_value=1, max_value=10,
-        value=get_default("no_win_steps", 5, 5), step=1,
-        help="Fengxing: 1 win / 5 no-win = 1-in-6 hit rate"
+        value=get_default("no_win_steps", 4, 4), step=1,
+        help="Fengxing: 50% base + 4-step cooldown = 1-in-5 hit rate"
     )
     cycle_length = win_steps + no_win_steps
 
     st.sidebar.markdown("---")
-    st.sidebar.header("Prize Tuning")
-
-    prize_floor = st.sidebar.number_input(
-        "Small Win Floor (\u00a3)", min_value=0.10, max_value=1.00,
-        value=get_default("prize_floor", 0.25, 0.25), step=0.05
-    )
-    prize_ceiling_small = st.sidebar.number_input(
-        "Small Win Ceiling (\u00a3)", min_value=0.25, max_value=2.00,
-        value=get_default("prize_ceiling_small", 0.50, 0.50), step=0.05
-    )
-    prize_floor_punch = st.sidebar.number_input(
-        "Punch Win Floor (\u00a3)", min_value=0.50, max_value=5.00,
-        value=get_default("prize_floor_punch", 1.00, 1.00), step=0.25
-    )
-    prize_ceiling_punch = st.sidebar.number_input(
-        "Punch Win Ceiling (\u00a3)", min_value=1.00, max_value=15.00,
-        value=get_default("prize_ceiling_punch", 5.00, 5.00), step=0.50
-    )
-    small_win_pct = st.sidebar.slider(
-        "Small Win % (of all wins)", min_value=50, max_value=100,
-        value=get_default("small_win_pct", 80, 80), step=5,
-        help="Fengxing recommends 80% small / 20% punch"
-    )
     paid_multiplier = st.sidebar.slider(
         "Paid Prize Multiplier", min_value=1.0, max_value=4.0,
         value=get_default("paid_multiplier", 2.0, 2.0), step=0.5,
-        help="Paid prize = Free prize x this multiplier"
+        help="Paid prize = Free prize x this multiplier. Applied when generating revised model."
     )
 
 
@@ -246,7 +214,6 @@ def compute_model_from_df(df, params):
     """Compute wallet/EV from an editable DataFrame. Works for both modes."""
     results = []
     w_fm, w_fe, w_pm, w_pe = 0.0, 0.0, 0.0, 0.0
-    min_odds = params.get("min_odds", 0.0)
 
     for _, row in df.iterrows():
         r = row.to_dict()
@@ -257,7 +224,7 @@ def compute_model_from_df(df, params):
             free_prize = 0.0
             paid_prize = 0.0
         else:
-            win_chance = max(r["win_chance"], min_odds) if r["win_chance"] < 1.0 else r["win_chance"]
+            win_chance = r["win_chance"]
             free_prize = r["free_prize"]
             paid_prize = r["paid_prize"]
 
@@ -344,7 +311,6 @@ params = {
     "platform_take": platform_take,
     "paypal_fee": paypal_fee,
     "target_rtp": target_rtp,
-    "min_odds": min_odds,
     "retention_free": retention_free,
     "retention_paid": retention_paid,
     "free_median_pct": free_median_pct,
@@ -358,11 +324,6 @@ if is_revised:
         "cycle_length": cycle_length,
         "win_steps": win_steps,
         "no_win_steps": no_win_steps,
-        "prize_floor": prize_floor,
-        "prize_ceiling_small": prize_ceiling_small,
-        "prize_floor_punch": prize_floor_punch,
-        "prize_ceiling_punch": prize_ceiling_punch,
-        "small_win_pct": small_win_pct,
         "paid_multiplier": paid_multiplier,
     })
 
@@ -373,26 +334,34 @@ elif is_saved and "step_data" in saved:
     # Load step data from saved model
     base_df = pd.DataFrame(saved["step_data"])
 else:
-    # Generate revised step data using cooldown + prize structure
+    # Generate revised step data:
+    # - Steps 1-14 (FTUE): keep scripted win chances and prize values from CURRENT_STEPS
+    # - Steps 15-28 (post-FTUE): apply cooldown mechanic with hardcoded prize ranges
+    #   (small wins £1.50-£2.00, punch wins £3.00-£5.00, 80/20 split)
+    #   Prize values can be fine-tuned directly in the editable table.
+    SMALL_FLOOR, SMALL_CEIL = 1.50, 2.00
+    PUNCH_FLOOR, PUNCH_CEIL = 3.00, 5.00
+    PUNCH_EVERY = 5  # every 5th instant win is a punch win (80/20 split)
+
     revised_rows = []
-    instant_idx = 0
+    instant_idx = 0  # counts instant-win steps in post-FTUE only
     for s in CURRENT_STEPS:
         row = {**s}
-        if s["type"] != "Sweepstakes":
-            if s["step"] == 1:
-                row["win_chance"] = 1.0
-            else:
-                pos = instant_idx % params["cycle_length"]
-                row["win_chance"] = 1.0 if pos < params["win_steps"] else 0.0
+        if s["step"] <= 14:
+            # FTUE: preserve exactly as designed (includes our added wins at steps 5 and 10)
+            pass
+        elif s["type"] != "Sweepstakes":
+            # Post-FTUE: apply cooldown mechanic
+            pos = instant_idx % params["cycle_length"]
+            row["win_chance"] = 1.0 if pos < params["win_steps"] else 0.01
             instant_idx += 1
 
-            punch_every = max(1, round(100 / max(1, 100 - params["small_win_pct"])))
-            if instant_idx % punch_every == 0:
-                progress = s["step"] / 28
-                row["free_prize"] = round((params["prize_floor_punch"] + progress * (params["prize_ceiling_punch"] - params["prize_floor_punch"])) * 4) / 4
+            # Apply prize structure with linear scaling
+            progress = (s["step"] - 14) / 14  # normalize post-FTUE progress (0 to 1)
+            if instant_idx % PUNCH_EVERY == 0:
+                row["free_prize"] = round((PUNCH_FLOOR + progress * (PUNCH_CEIL - PUNCH_FLOOR)) * 4) / 4
             else:
-                progress = s["step"] / 28
-                row["free_prize"] = round((params["prize_floor"] + progress * (params["prize_ceiling_small"] - params["prize_floor"])) * 4) / 4
+                row["free_prize"] = round((SMALL_FLOOR + progress * (SMALL_CEIL - SMALL_FLOOR)) * 4) / 4
             row["paid_prize"] = round(row["free_prize"] * params["paid_multiplier"] * 4) / 4
         revised_rows.append(row)
     base_df = pd.DataFrame(revised_rows)
@@ -410,8 +379,7 @@ net_rev = price_point * (1 - platform_take) - paypal_fee
 
 # Battle pass table - EDITABLE
 st.markdown("---")
-st.subheader("Battle Pass Steps (edit values below)")
-st.caption("Change any Win %, Free Prize, or Paid Prize value and the economics will recalculate automatically.")
+st.subheader("Battle Pass Steps")
 
 # Prepare editable columns (only show editable fields + context)
 edit_df = pd.DataFrame([{
@@ -424,8 +392,14 @@ edit_df = pd.DataFrame([{
     "Paid Prize": r["paid_prize"] if r["type"] != "Sweepstakes" else 0.0,
 } for r in results])
 
-# Let user edit the key columns
-st.caption("Edit **Win %**, **Free Prize**, and **Paid Prize** below. The results table underneath will update automatically.")
+# Build a unique key from sidebar settings so the table resets when sliders change
+# (st.data_editor caches by key — if the key stays the same, old edits persist)
+_editor_key_parts = [model_mode, str(price_point), str(int(platform_take*100))]
+if is_revised:
+    _editor_key_parts += [str(win_steps), str(no_win_steps), str(paid_multiplier)]
+_editor_key = "step_editor_" + "_".join(_editor_key_parts)
+
+st.caption("Edit **Win %**, **Free Prize**, and **Paid Prize** below. Results update automatically.")
 edited_df = st.data_editor(
     edit_df,
     use_container_width=True,
@@ -436,11 +410,11 @@ edited_df = st.data_editor(
         "Level": st.column_config.NumberColumn("Level", width="small"),
         "Tickets": st.column_config.NumberColumn("Tickets", format="%d"),
         "Win % (input)": st.column_config.NumberColumn("Win %", min_value=0, max_value=100, step=0.5, format="%.1f%%",
-            help="Set your desired win chance. Values below the regulatory minimum will be bumped up automatically."),
+            help="Set your desired win chance per step."),
         "Free Prize": st.column_config.NumberColumn("Free Prize", min_value=0, max_value=100, step=0.25, format="\u00a3%.2f"),
         "Paid Prize": st.column_config.NumberColumn("Paid Prize", min_value=0, max_value=200, step=0.25, format="\u00a3%.2f"),
     },
-    key="step_editor",
+    key=_editor_key,
 )
 
 # Recalculate from edited values
@@ -460,7 +434,8 @@ c1, c2, c3, c4, c5, c6 = st.columns(6)
 with c1:
     st.metric("Pass Price", f"\u00a3{price_point:.2f}")
 with c2:
-    st.metric("Net Rev / Paid User", f"\u00a3{net_rev:.2f}")
+    st.metric("Net Rev / Paid User", f"\u00a3{net_rev:.2f}",
+              help="Pass Price minus platform take and PayPal fee. This is the max you can pay out per paid player before losing money. Shown as the green dashed line on the wallet chart.")
 with c3:
     st.metric("RTP (Target)", f"{target_rtp*100:.0f}%")
 with c4:
@@ -470,19 +445,22 @@ with c4:
         f"{calculated_rtp:.0f}%",
         delta=f"{rtp_delta:+.0f}% vs target",
         delta_color="inverse" if calculated_rtp > target_rtp * 100 else "normal",
-        help="Calculated from current prize schedule. Lower is better for the business."
+        help="RTP = Total Blended Payout / Total Blended Income x 100. Blended Payout = sum of (Expected Payout x Incidence) across all segments. Blended Income = sum of (Income x Incidence) across all segments. Lower RTP = better for the business."
     )
 with c5:
     if is_revised:
-        st.metric("Hit Rate", f"1 in {cycle_length}")
+        st.metric("Hit Rate", f"1 in {cycle_length}",
+                  help="Cooldown mechanic applied to post-FTUE steps (15-28 only). Steps 1-14 use scripted win chances. Controlled by the Cooldown Mechanic sliders in the sidebar.")
     else:
-        st.metric("Hit Rate", "Variable")
+        st.metric("Hit Rate", "Variable",
+                  help="Current model uses variable win chances per step as defined in the original spreadsheet.")
 with c6:
     st.metric(
         "Overall Position",
         f"\u00a3{overall_position:.2f}",
         delta="Profit" if overall_position >= 0 else "Loss",
         delta_color="normal" if overall_position >= 0 else "inverse",
+        help="Blended profit or loss per player across all segments. Calculated as the sum of each segment's Contribution: (Income - Expected Payout) x Incidence. Positive = profitable, negative = losing money."
     )
 
 # Handle save button click
@@ -493,7 +471,6 @@ if save_clicked and save_name.strip():
         "platform_take_pct": int(platform_take * 100),
         "paypal_fee": paypal_fee,
         "target_rtp_pct": int(target_rtp * 100),
-        "min_odds_pct": min_odds_pct,
         "retention_free_pct": int(retention_free * 100),
         "retention_paid_pct": int(retention_paid * 100),
         "free_median_pct": free_median_pct,
@@ -505,11 +482,6 @@ if save_clicked and save_name.strip():
         settings_to_save.update({
             "win_steps": win_steps,
             "no_win_steps": no_win_steps,
-            "prize_floor": prize_floor,
-            "prize_ceiling_small": prize_ceiling_small,
-            "prize_floor_punch": prize_floor_punch,
-            "prize_ceiling_punch": prize_ceiling_punch,
-            "small_win_pct": small_win_pct,
             "paid_multiplier": paid_multiplier,
         })
 
@@ -545,8 +517,8 @@ elif save_clicked and not save_name.strip():
 
 # Show recalculated results table
 st.markdown("---")
-st.subheader("Recalculated Step Economics")
-st.caption("These values reflect your edits above and update automatically.")
+st.subheader("Step Results")
+st.caption("Calculated from your edits above. Updates automatically.")
 
 recalc_display = pd.DataFrame([{
     "Step": r["step"],
@@ -564,7 +536,45 @@ st.dataframe(recalc_display, use_container_width=True, hide_index=True)
 # Economics table
 st.markdown("---")
 st.subheader("Economic Summary by Segment")
-st.dataframe(pd.DataFrame(econ_rows), use_container_width=True, hide_index=True)
+st.dataframe(
+    pd.DataFrame(econ_rows),
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "Segment": st.column_config.TextColumn(
+            "Segment",
+            help="Player segment. Free = didn't buy the pass. Paid = bought the pass. Median = stops playing at the FTUE boundary. Engaged = plays through all 28 steps."
+        ),
+        "Exp. Wallet": st.column_config.TextColumn(
+            "Exp. Wallet",
+            help="Total expected prize value accumulated across all steps for this segment. This is the sum of (Prize x Win Chance) at each step the player reaches."
+        ),
+        "Income": st.column_config.TextColumn(
+            "Income",
+            help="Gross revenue from this segment. Free players = £0. Paid players = the pass price. This is gross before platform fees."
+        ),
+        "D7 Retention": st.column_config.TextColumn(
+            "D7 Retention",
+            help="Estimated % of players in this segment who actually cash out their winnings. Higher = more payouts. Set in the sidebar under D7 Retention."
+        ),
+        "Expected Payout": st.column_config.TextColumn(
+            "Expected Payout",
+            help="What the house actually pays out. Calculated as: Expected Wallet x D7 Retention. The rest is breakage (won but never collected)."
+        ),
+        "Net Position": st.column_config.TextColumn(
+            "Net Position",
+            help="Profit or loss per player in this segment. Calculated as: Income - Expected Payout. Negative means the house loses money on this segment."
+        ),
+        "Incidence": st.column_config.TextColumn(
+            "Incidence",
+            help="What % of the total player base falls in this segment. Set in the sidebar under Player Segments. All four should sum to 100%."
+        ),
+        "Contribution": st.column_config.TextColumn(
+            "Contribution",
+            help="This segment's weighted impact on overall profit. Calculated as: Net Position x Incidence. The sum of all four contributions = Overall Position."
+        ),
+    }
+)
 
 if overall_position < 0:
     st.error(f"Blended position: **\u00a3{overall_position:.2f}** per player. "
@@ -573,20 +583,36 @@ else:
     st.success(f"Blended position: **\u00a3{overall_position:.2f}** per player. "
                f"The model is profitable at these settings.")
 
-# RTP summary after edits
-rtp_col1, rtp_col2, rtp_col3 = st.columns(3)
-with rtp_col1:
-    st.metric("Actual RTP (from prize schedule)", f"{calculated_rtp:.0f}%")
-with rtp_col2:
-    st.metric("Target RTP (Fengxing)", f"{target_rtp*100:.0f}%")
-with rtp_col3:
-    rtp_gap = calculated_rtp - (target_rtp * 100)
-    if rtp_gap > 10:
-        st.metric("RTP Gap", f"{rtp_gap:+.0f}%", delta="Too high", delta_color="inverse")
-    elif rtp_gap > 0:
-        st.metric("RTP Gap", f"{rtp_gap:+.0f}%", delta="Slightly over target", delta_color="inverse")
-    else:
-        st.metric("RTP Gap", f"{rtp_gap:+.0f}%", delta="At or below target", delta_color="normal")
+# ===================================================================
+# RETENTION STRESS TEST
+# ===================================================================
+st.markdown("---")
+st.subheader("Retention Stress Test")
+st.caption("How does profitability hold up if more paid players cash out? Fengxing recommends stress-testing at 40-50%.")
+
+def stress_test_economics(results, params, paid_ret_override):
+    """Run economics with a different paid retention rate."""
+    stress_params = {**params, "retention_paid": paid_ret_override}
+    _, stress_overall, _, stress_rtp = compute_economics(results, stress_params)
+    return stress_overall, stress_rtp
+
+stress_scenarios = [
+    (f"Current ({int(retention_paid*100)}%)", retention_paid),
+    ("40% cashout", 0.40),
+    ("50% cashout", 0.50),
+]
+
+stress_cols = st.columns(len(stress_scenarios))
+for col, (label, ret) in zip(stress_cols, stress_scenarios):
+    s_pos, s_rtp = stress_test_economics(results, params, ret)
+    with col:
+        st.metric(
+            label,
+            f"\u00a3{s_pos:.2f}",
+            delta="Profit" if s_pos >= 0 else "Loss",
+            delta_color="normal" if s_pos >= 0 else "inverse",
+        )
+        st.caption(f"RTP: {s_rtp:.0f}%")
 
 # ===================================================================
 # CHARTS
@@ -631,7 +657,11 @@ st.plotly_chart(fig_wallet, use_container_width=True)
 st.subheader("Win Probability by Step")
 
 instant_steps = [r for r in results if r["type"] != "Sweepstakes"]
-colors = ["#2ecc71" if r["win_chance_effective"] > min_odds else "#f39c12" if r["win_chance_effective"] > 0 else "#e74c3c" for r in instant_steps]
+# Color by win type: guaranteed (100%) = green, cooldown win = blue, low odds = gray
+colors = ["#2ecc71" if r["win_chance_effective"] >= 1.0
+          else "#3498db" if r["win_chance_effective"] > 0.05
+          else "#95a5a6"
+          for r in instant_steps]
 
 fig_win = go.Figure()
 fig_win.add_trace(go.Bar(
@@ -679,4 +709,4 @@ st.plotly_chart(fig_prize, use_container_width=True)
 
 
 st.markdown("---")
-st.caption("Molly's Cash Battle Pass Model | Built for TXG | v2.0")
+st.caption("Molly's Cash Battle Pass Model | Built for TXG | v3.0")
