@@ -75,6 +75,16 @@ is_saved = model_mode in st.session_state.saved_models
 saved = st.session_state.saved_models.get(model_mode, {}) if is_saved else {}
 is_revised = model_mode == "Revised Model" or is_saved  # Saved models use revised structure
 
+# Determine total steps for this model (needed for dynamic milestones)
+if is_saved and "step_data" in saved:
+    total_steps = len(saved["step_data"])
+else:
+    total_steps = len(CURRENT_STEPS)  # 28 for both Current and Revised
+
+# Compute milestone steps (quartiles of total steps)
+# For 28 steps: [7, 14, 21, 28]. For 35 steps: [9, 18, 26, 35].
+milestones = [round(total_steps * q) for q in [0.25, 0.5, 0.75, 1.0]]
+
 # --- Save / Load / Export / Import ---
 st.sidebar.markdown("---")
 st.sidebar.header("Save & Load")
@@ -225,35 +235,41 @@ free_pct = 100 - paid_conversion_pct
 
 st.sidebar.markdown("---")
 st.sidebar.header("Step Completion (Free Players)")
-st.sidebar.caption("% of free players who reach each milestone step.")
+st.sidebar.caption(f"% of free players who reach each milestone step. Milestones at steps {', '.join(str(m) for m in milestones)}.")
 
-free_step7 = st.sidebar.slider("Free → Step 7", 0, 100,
-    get_default("free_step7", 60, 60), 5, help="% of free players reaching step 7") / 100
-free_step14 = st.sidebar.slider("Free → Step 14", 0, 100,
-    get_default("free_step14", 30, 30), 5, help="% of free players reaching step 14 (end of FTUE)") / 100
-free_step21 = st.sidebar.slider("Free → Step 21", 0, 100,
-    get_default("free_step21", 10, 10), 5, help="% of free players reaching step 21") / 100
-free_step28 = st.sidebar.slider("Free → Step 28", 0, 100,
-    get_default("free_step28", 3, 3), 1, help="% of free players completing the full pass") / 100
+_free_defaults = [60, 30, 10, 3]
+free_completions = {}
+for i, ms in enumerate(milestones):
+    _key = f"free_step{ms}"
+    _step_size = 5 if i < 3 else 1
+    _help = f"% of free players reaching step {ms}" + (" (end of pass)" if i == 3 else "")
+    free_completions[ms] = st.sidebar.slider(
+        f"Free → Step {ms}", 0, 100,
+        get_default(_key, _free_defaults[i], _free_defaults[i]), _step_size,
+        help=_help, key=f"free_comp_{ms}"
+    ) / 100
 
 st.sidebar.markdown("---")
 st.sidebar.header("Step Completion (Paid Players)")
-st.sidebar.caption("% of paid players who reach each milestone step.")
+st.sidebar.caption(f"% of paid players who reach each milestone step. Milestones at steps {', '.join(str(m) for m in milestones)}.")
 
-paid_step7 = st.sidebar.slider("Paid → Step 7", 0, 100,
-    get_default("paid_step7", 90, 90), 5, help="% of paid players reaching step 7") / 100
-paid_step14 = st.sidebar.slider("Paid → Step 14", 0, 100,
-    get_default("paid_step14", 70, 70), 5, help="% of paid players reaching step 14 (end of FTUE)") / 100
-paid_step21 = st.sidebar.slider("Paid → Step 21", 0, 100,
-    get_default("paid_step21", 40, 40), 5, help="% of paid players reaching step 21") / 100
-paid_step28 = st.sidebar.slider("Paid → Step 28", 0, 100,
-    get_default("paid_step28", 20, 20), 5, help="% of paid players completing the full pass") / 100
+_paid_defaults = [90, 70, 40, 20]
+paid_completions = {}
+for i, ms in enumerate(milestones):
+    _key = f"paid_step{ms}"
+    _step_size = 5 if i < 3 else 1
+    _help = f"% of paid players reaching step {ms}" + (" (end of pass)" if i == 3 else "")
+    paid_completions[ms] = st.sidebar.slider(
+        f"Paid → Step {ms}", 0, 100,
+        get_default(_key, _paid_defaults[i], _paid_defaults[i]), _step_size,
+        help=_help, key=f"paid_comp_{ms}"
+    ) / 100
 
 # Validate step completion curves are monotonically decreasing
-_free_steps = [free_step7, free_step14, free_step21, free_step28]
-_paid_steps = [paid_step7, paid_step14, paid_step21, paid_step28]
-_step_labels = ["Step 7", "Step 14", "Step 21", "Step 28"]
-for label, vals in [("Free", _free_steps), ("Paid", _paid_steps)]:
+_free_vals = list(free_completions.values())
+_paid_vals = list(paid_completions.values())
+_step_labels = [f"Step {m}" for m in milestones]
+for label, vals in [("Free", _free_vals), ("Paid", _paid_vals)]:
     for i in range(1, len(vals)):
         if vals[i] > vals[i - 1]:
             st.sidebar.warning(
@@ -362,14 +378,11 @@ def compute_weighted_wallet(results, step_completions, wallet_key):
     """Compute weighted average wallet using step completion distribution.
 
     step_completions: dict of {step: pct_reaching} e.g. {7: 0.90, 14: 0.70, 21: 0.40, 28: 0.20}
+                      Milestones are dynamic — quartiles of total steps (28 → [7,14,21,28], 35 → [9,18,26,35]).
     wallet_key: 'w_fe' for free, 'w_pe' for paid
 
-    The distribution creates tiers:
-    - Don't reach step 7:           (1 - pct_step7)       × wallet at step 1
-    - Reach step 7 but not 14:      (pct_step7 - pct_14)  × wallet at step 7
-    - Reach step 14 but not 21:     (pct_14 - pct_21)     × wallet at step 14
-    - Reach step 21 but not 28:     (pct_21 - pct_28)     × wallet at step 21
-    - Complete step 28:             pct_28                  × wallet at step 28
+    The distribution creates tiers between each milestone pair. Players who drop off
+    before a milestone contribute their wallet at the previous milestone step.
     """
     milestones = sorted(step_completions.keys())  # [7, 14, 21, 28]
 
@@ -406,13 +419,8 @@ def compute_economics(results, params):
     - Contribution = Net Position × Incidence (free% or paid%)
     """
     # Compute weighted wallets from step completion curves
-    free_completions = {7: params["free_step7"], 14: params["free_step14"],
-                        21: params["free_step21"], 28: params["free_step28"]}
-    paid_completions = {7: params["paid_step7"], 14: params["paid_step14"],
-                        21: params["paid_step21"], 28: params["paid_step28"]}
-
-    free_weighted_wallet = compute_weighted_wallet(results, free_completions, "w_fe")
-    paid_weighted_wallet = compute_weighted_wallet(results, paid_completions, "w_pe")
+    free_weighted_wallet = compute_weighted_wallet(results, params["free_completions"], "w_fe")
+    paid_weighted_wallet = compute_weighted_wallet(results, params["paid_completions"], "w_pe")
 
     free_incidence = params["free_pct"] / 100
     paid_incidence = params["paid_conversion_pct"] / 100
@@ -468,14 +476,9 @@ params = {
     "retention_paid": retention_paid,
     "paid_conversion_pct": paid_conversion_pct,
     "free_pct": free_pct,
-    "free_step7": free_step7,
-    "free_step14": free_step14,
-    "free_step21": free_step21,
-    "free_step28": free_step28,
-    "paid_step7": paid_step7,
-    "paid_step14": paid_step14,
-    "paid_step21": paid_step21,
-    "paid_step28": paid_step28,
+    "milestones": milestones,
+    "free_completions": free_completions,
+    "paid_completions": paid_completions,
     "cashout_threshold": cashout_threshold,
 }
 
@@ -642,16 +645,14 @@ if save_clicked and save_name.strip():
         "retention_free_pct": int(retention_free * 100),
         "retention_paid_pct": int(retention_paid * 100),
         "paid_conversion_pct": paid_conversion_pct,
-        "free_step7": int(free_step7 * 100),
-        "free_step14": int(free_step14 * 100),
-        "free_step21": int(free_step21 * 100),
-        "free_step28": int(free_step28 * 100),
-        "paid_step7": int(paid_step7 * 100),
-        "paid_step14": int(paid_step14 * 100),
-        "paid_step21": int(paid_step21 * 100),
-        "paid_step28": int(paid_step28 * 100),
         "cashout_threshold": cashout_threshold,
+        "milestones": milestones,
     }
+    # Save step completion values keyed by milestone step number
+    for ms, val in free_completions.items():
+        settings_to_save[f"free_step{ms}"] = int(val * 100)
+    for ms, val in paid_completions.items():
+        settings_to_save[f"paid_step{ms}"] = int(val * 100)
     if is_revised:
         settings_to_save.update({
             "win_steps": win_steps,
@@ -879,13 +880,8 @@ def simulate_multi_week_real(results, params, num_seasons, daily_ret_free, daily
     """
     season_days = params["pass_duration_days"]
     # Compute weighted wallets from step completion curves
-    free_completions = {7: params["free_step7"], 14: params["free_step14"],
-                        21: params["free_step21"], 28: params["free_step28"]}
-    paid_completions = {7: params["paid_step7"], 14: params["paid_step14"],
-                        21: params["paid_step21"], 28: params["paid_step28"]}
-
-    free_weighted_wallet = compute_weighted_wallet(results, free_completions, "w_fe")
-    paid_weighted_wallet = compute_weighted_wallet(results, paid_completions, "w_pe")
+    free_weighted_wallet = compute_weighted_wallet(results, params["free_completions"], "w_fe")
+    paid_weighted_wallet = compute_weighted_wallet(results, params["paid_completions"], "w_pe")
 
     # Use net income (after platform take and PayPal fee) — consistent with single-season economics
     net_income_paid = params["price_point"] * (1 - params["platform_take"]) - params["paypal_fee"]
