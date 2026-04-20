@@ -111,10 +111,11 @@ with import_col:
     if uploaded is not None:
         try:
             raw = uploaded.read()
-            if raw:  # guard against empty read
+            if raw:
                 imported = json.loads(raw)
-                if imported and isinstance(imported, dict):
-                    # Check if these models are already loaded to avoid redundant reruns
+
+                # Format 1: Full export — {"Model Name": {"settings": {...}, "step_data": [...]}}
+                if imported and isinstance(imported, dict) and not any(k in imported for k in ["Step", "step"]):
                     new_models = {k: v for k, v in imported.items()
                                   if k not in st.session_state.saved_models}
                     if new_models:
@@ -123,8 +124,50 @@ with import_col:
                         st.rerun()
                     else:
                         st.sidebar.info("Models already loaded.")
+
+                # Format 2: Flat step array — [{Step, Type, Win %, Free Prize, Paid Prize}, ...]
+                elif imported and isinstance(imported, list) and len(imported) > 0:
+                    model_name = uploaded.name.replace(".json", "").replace("_", " ").title()
+                    # Convert to internal step_data format
+                    step_data = []
+                    for i, row in enumerate(imported):
+                        step_num = row.get("Step", row.get("step", i + 1))
+                        step_type = row.get("Type", row.get("type", "Instant Win"))
+                        win_pct = row.get("Win %", row.get("win_chance", 0))
+                        free_p = row.get("Free Prize", row.get("free_prize", 0))
+                        paid_p = row.get("Paid Prize", row.get("paid_prize", 0))
+                        # Handle sweep text like "£100 sweep"
+                        if isinstance(free_p, str):
+                            free_p = 0.0
+                        if isinstance(paid_p, str):
+                            paid_p = 0.0
+                        # Match against CURRENT_STEPS for metadata (level, tickets, etc.)
+                        base = CURRENT_STEPS[i] if i < len(CURRENT_STEPS) else {}
+                        step_data.append({
+                            "step": step_num,
+                            "level": base.get("level", 0),
+                            "tickets": base.get("tickets", 0),
+                            "sess_med": base.get("sess_med"),
+                            "sess_eng": base.get("sess_eng", 0),
+                            "type": step_type,
+                            "win_chance": win_pct,
+                            "free_prize": float(free_p),
+                            "paid_prize": float(paid_p),
+                        })
+                        if step_type == "Sweepstakes" and "sweep_amt" in base:
+                            step_data[-1]["sweep_amt"] = base["sweep_amt"]
+
+                    if model_name not in st.session_state.saved_models:
+                        st.session_state.saved_models[model_name] = {
+                            "settings": {},  # uses current sidebar defaults
+                            "step_data": step_data,
+                        }
+                        st.sidebar.success(f"Imported '{model_name}'")
+                        st.rerun()
+                    else:
+                        st.sidebar.info(f"'{model_name}' already loaded.")
                 else:
-                    st.sidebar.error("JSON file is empty or not a valid model export.")
+                    st.sidebar.error("JSON file is empty or not a recognized format.")
         except (json.JSONDecodeError, Exception) as e:
             st.sidebar.error(f"Invalid JSON file: {e}")
 
