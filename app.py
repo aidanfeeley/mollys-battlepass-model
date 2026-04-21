@@ -108,11 +108,11 @@ export_col, import_col = st.sidebar.columns(2)
 with export_col:
     if st.session_state.saved_models:
         export_data = json.dumps(st.session_state.saved_models, indent=2)
-        # Use current model name for filename if viewing a saved model, otherwise generic
-        if is_saved:
-            _export_name = model_mode.replace(" ", "_").lower() + ".json"
-        else:
-            _export_name = "battlepass_models.json"
+        # Build filename: use save name input if filled, else current model name, else generic
+        _raw_name = (save_name.strip() if save_name.strip()
+                     else model_mode if is_saved
+                     else "battlepass_models")
+        _export_name = _raw_name.replace(" ", "_").lower() + ".json"
         st.download_button(
             "Export All",
             data=export_data,
