@@ -222,12 +222,6 @@ paypal_fee = st.sidebar.number_input(
     value=get_default("paypal_fee", 0.08, 0.08), step=0.01
 )
 
-target_rtp = st.sidebar.slider(
-    "Target RTP %", min_value=30, max_value=95,
-    value=get_default("target_rtp_pct", 55, 95), step=5,
-    help="Fengxing recommends 50-60% for bingo-pace products."
-) / 100
-
 st.sidebar.markdown("---")
 st.sidebar.header("Player Mix")
 
@@ -483,7 +477,8 @@ def compute_economics(results, params):
 
     Formula:
     - Weighted Wallet = weighted average based on step completion distribution
-    - Expected Payout = Weighted Wallet × D7 Cashout Rate
+    - Expected Payout = Weighted Wallet × Retention (for net position / P&L)
+    - RTP = Wallet Accrued / Income (prizes earned, not retention-discounted)
     - Net Position = Income − Expected Payout
     - Contribution = Net Position × Incidence (free% or paid%)
     """
@@ -503,18 +498,28 @@ def compute_economics(results, params):
     ]
 
     overall = 0.0
-    total_blended_payout = 0.0
-    total_blended_income = 0.0
+    # RTP tracks: wallet accrued (liability) vs income
+    total_rtp_payout = 0.0
+    total_rtp_income = 0.0
+    # Paid-tier RTP: only paid segments
+    paid_rtp_payout = 0.0
+    paid_rtp_income = 0.0
     rows = []
 
     for name, total_exp, income, retention, incidence in segments:
-        expected_payout = total_exp * retention
+        expected_payout = total_exp * retention  # retention-discounted for net position
         net_pos = income - expected_payout
         contribution = net_pos * incidence
         overall += contribution
 
-        total_blended_payout += expected_payout * incidence
-        total_blended_income += income * incidence
+        # RTP uses wallet accrued (total_exp), not retention-discounted payout
+        total_rtp_payout += total_exp * incidence
+        total_rtp_income += income * incidence
+
+        # Paid-tier RTP: only include segments with income > 0
+        if income > 0:
+            paid_rtp_payout += total_exp * incidence
+            paid_rtp_income += income * incidence
 
         cashout_col_name = f"D{params['pass_duration_days']} Cashout" if params["pass_duration_days"] != 7 else "D7 Cashout"
         rows.append({
@@ -528,9 +533,10 @@ def compute_economics(results, params):
             "Contribution": f"\u00a3{contribution:.2f}",
         })
 
-    calculated_rtp = (total_blended_payout / total_blended_income * 100) if total_blended_income > 0 else 0.0
+    blended_rtp = (total_rtp_payout / total_rtp_income * 100) if total_rtp_income > 0 else 0.0
+    paid_rtp = (paid_rtp_payout / paid_rtp_income * 100) if paid_rtp_income > 0 else 0.0
 
-    return rows, overall, calculated_rtp
+    return rows, overall, blended_rtp, paid_rtp
 
 
 def simulate_pass_with_carryover(results, starting_wallet, cashout_threshold, wallet_key):
@@ -606,6 +612,9 @@ def compute_w2_segment_payout(w2_results, starting_wallet, cashout_threshold, wa
 def compute_w2_economics(w2_results, w1_results, params):
     """Compute Week 2 economics with 4 player segments and mid-pass cashout simulation.
 
+    RTP uses wallet accrued during W2 only (excludes W1 carryover) — consistent with W1.
+    Net position still uses cashout simulation for actual P&L.
+
     Segments:
     - W1 Free -> W2 Free: carries W1 free wallet, plays free
     - W1 Free -> W2 Paid: carries W1 free wallet, pays for W2, plays paid
@@ -623,7 +632,11 @@ def compute_w2_economics(w2_results, w1_results, params):
     w1_free_wallet = compute_weighted_wallet(w1_results, params["free_completions"], "w_fe")
     w1_paid_wallet = compute_weighted_wallet(w1_results, params["paid_completions"], "w_pe")
 
-    # 4 segments: (name, incidence, income, starting_wallet, wallet_key_for_w2, step_completions_for_w2)
+    # W2 wallet accrued (prizes earned during W2 only, no carryover) — for RTP
+    w2_free_accrued = compute_weighted_wallet(w2_results, params["w2_free_completions"], "w_fe")
+    w2_paid_accrued = compute_weighted_wallet(w2_results, params["w2_paid_completions"], "w_pe")
+
+    # 4 segments: (name, incidence, income, starting_wallet, wallet_key, step_completions, w2_accrued)
     segments = [
         (
             "W1 Free \u2192 W2 Free",
@@ -632,6 +645,7 @@ def compute_w2_economics(w2_results, w1_results, params):
             w1_free_wallet,
             "w_fe",
             params["w2_free_completions"],
+            w2_free_accrued,
         ),
         (
             "W1 Free \u2192 W2 Paid",
@@ -640,6 +654,7 @@ def compute_w2_economics(w2_results, w1_results, params):
             w1_free_wallet,
             "w_pe",
             params["w2_paid_completions"],
+            w2_paid_accrued,
         ),
         (
             "W1 Paid \u2192 W2 Repurchase",
@@ -648,6 +663,7 @@ def compute_w2_economics(w2_results, w1_results, params):
             w1_paid_wallet,
             "w_pe",
             params["w2_paid_completions"],
+            w2_paid_accrued,
         ),
         (
             "W1 Paid \u2192 W2 Free",
@@ -656,15 +672,21 @@ def compute_w2_economics(w2_results, w1_results, params):
             w1_paid_wallet,
             "w_fe",
             params["w2_free_completions"],
+            w2_free_accrued,
         ),
     ]
 
     overall = 0.0
-    total_blended_payout = 0.0
-    total_blended_income = 0.0
+    # RTP tracks: W2 wallet accrued (liability) vs income
+    total_rtp_payout = 0.0
+    total_rtp_income = 0.0
+    # Paid-tier RTP: only paid segments
+    paid_rtp_payout = 0.0
+    paid_rtp_income = 0.0
     rows = []
 
-    for name, incidence, income, starting_wallet, wallet_key, step_comps in segments:
+    for name, incidence, income, starting_wallet, wallet_key, step_comps, w2_accrued in segments:
+        # Cashout simulation for net position (actual P&L)
         expected_payout, ending_wallet = compute_w2_segment_payout(
             w2_results, starting_wallet, threshold, wallet_key, step_comps
         )
@@ -672,12 +694,19 @@ def compute_w2_economics(w2_results, w1_results, params):
         contribution = net_pos * incidence
         overall += contribution
 
-        total_blended_payout += expected_payout * incidence
-        total_blended_income += income * incidence
+        # RTP uses W2 wallet accrued only (excludes carryover)
+        total_rtp_payout += w2_accrued * incidence
+        total_rtp_income += income * incidence
+
+        # Paid-tier RTP: only include segments with income > 0
+        if income > 0:
+            paid_rtp_payout += w2_accrued * incidence
+            paid_rtp_income += income * incidence
 
         rows.append({
             "Segment": name,
             "Carryover Wallet": f"\u00a3{starting_wallet:.2f}",
+            "W2 Accrued": f"\u00a3{w2_accrued:.2f}",
             "Income": f"\u00a3{income:.2f}",
             "Expected Payout": f"\u00a3{expected_payout:.2f}",
             "Ending Wallet": f"\u00a3{ending_wallet:.2f}",
@@ -686,9 +715,10 @@ def compute_w2_economics(w2_results, w1_results, params):
             "Contribution": f"\u00a3{contribution:.2f}",
         })
 
-    calculated_rtp = (total_blended_payout / total_blended_income * 100) if total_blended_income > 0 else 0.0
+    blended_rtp = (total_rtp_payout / total_rtp_income * 100) if total_rtp_income > 0 else 0.0
+    paid_rtp = (paid_rtp_payout / paid_rtp_income * 100) if paid_rtp_income > 0 else 0.0
 
-    return rows, overall, calculated_rtp
+    return rows, overall, blended_rtp, paid_rtp
 
 
 # Build params
@@ -698,7 +728,6 @@ params = {
     "price_point": price_point,
     "platform_take": platform_take,
     "paypal_fee": paypal_fee,
-    "target_rtp": target_rtp,
     "retention_free": retention_free,
     "retention_paid": retention_paid,
     "paid_conversion_pct": paid_conversion_pct,
@@ -763,7 +792,7 @@ else:
 
 # Run model from the base data first (before user edits)
 results = compute_model_from_df(base_df, params)
-econ_rows, overall_position, calculated_rtp = compute_economics(results, params)
+econ_rows, overall_position, calculated_rtp, paid_rtp = compute_economics(results, params)
 
 
 # ===================================================================
@@ -833,7 +862,7 @@ with tab_w1:
             recalc_df.at[i, "paid_prize"] = row["Paid Prize"]
 
     results = compute_model_from_df(recalc_df, params)
-    econ_rows, overall_position, calculated_rtp = compute_economics(results, params)
+    econ_rows, overall_position, calculated_rtp, paid_rtp = compute_economics(results, params)
 
     # Key metrics row (placed AFTER recalculation so it reflects table edits)
     st.markdown("---")
@@ -845,16 +874,16 @@ with tab_w1:
         st.metric("Net Rev / Paid User", f"\u00a3{net_rev:.2f}",
                   help="Pass Price x (1 - Platform %) - PayPal Fee. The actual revenue per paid player after fees. Green dashed line on the wallet chart.")
     with c3:
-        st.metric("RTP (Target)", f"{target_rtp*100:.0f}%",
-                  help="Your target Return to Player. The model highlights when Actual RTP drifts from this.")
-    with c4:
-        rtp_delta = calculated_rtp - (target_rtp * 100)
         st.metric(
-            "RTP (Actual)",
+            "Blended RTP",
             f"{calculated_rtp:.0f}%",
-            delta=f"{rtp_delta:+.0f}% vs target",
-            delta_color="inverse" if calculated_rtp > target_rtp * 100 else "normal",
-            help="RTP = Total Blended Payout / Total Blended Income x 100. Blended Payout = sum of (Expected Payout x Incidence) across all segments. Blended Income = sum of (Income x Incidence) across all segments. Lower RTP = better for the business."
+            help="Total Blended Payout (accrued) / Total Blended Income × 100. Payout = prizes accrued in wallet across all segments."
+        )
+    with c4:
+        st.metric(
+            "Paid RTP",
+            f"{paid_rtp:.0f}%",
+            help="Total Paid Payout (accrued) / Total Paid Income × 100. Paid segments only."
         )
     with c5:
         if is_revised:
@@ -964,8 +993,8 @@ with tab_w1:
     def stress_test_economics(results, params, paid_ret_override):
         """Run economics with a different paid retention rate."""
         stress_params = {**params, "retention_paid": paid_ret_override}
-        _, stress_overall, stress_rtp = compute_economics(results, stress_params)
-        return stress_overall, stress_rtp
+        _, stress_overall, stress_rtp, stress_paid_rtp = compute_economics(results, stress_params)
+        return stress_overall, stress_rtp, stress_paid_rtp
 
     stress_scenarios = [
         (f"Current ({int(retention_paid*100)}%)", retention_paid),
@@ -975,7 +1004,7 @@ with tab_w1:
 
     stress_cols = st.columns(len(stress_scenarios))
     for col, (label, ret) in zip(stress_cols, stress_scenarios):
-        s_pos, s_rtp = stress_test_economics(results, params, ret)
+        s_pos, s_rtp, s_paid_rtp = stress_test_economics(results, params, ret)
         with col:
             st.metric(
                 label,
@@ -983,7 +1012,7 @@ with tab_w1:
                 delta="Profit" if s_pos >= 0 else "Loss",
                 delta_color="normal" if s_pos >= 0 else "inverse",
             )
-            st.caption(f"RTP: {s_rtp:.0f}%")
+            st.caption(f"Blended RTP: {s_rtp:.0f}% | Paid RTP: {s_paid_rtp:.0f}%")
 
     # ===================================================================
     # CHARTS (collapsed by default)
@@ -1189,12 +1218,12 @@ with tab_w2:
         "Expected payout is weighted by step completion distribution."
     )
 
-    w2_econ_rows, w2_overall, w2_rtp = compute_w2_economics(w2_results, results, params)
+    w2_econ_rows, w2_overall, w2_rtp, w2_paid_rtp = compute_w2_economics(w2_results, results, params)
 
     w2_net_rev = w2_price_point * (1 - platform_take) - paypal_fee
 
     # Key metrics for Week 2
-    w2c1, w2c2, w2c3, w2c4 = st.columns(4)
+    w2c1, w2c2, w2c3, w2c4, w2c5, w2c6 = st.columns(6)
     with w2c1:
         st.metric("W2 Pass Price", f"\u00a3{w2_price_point:.2f}",
                   help="Gross price of the Week 2 premium pass.")
@@ -1205,6 +1234,18 @@ with tab_w2:
         st.metric("W2 Repurchase Rate", f"{w2_repurchase_rate*100:.0f}%",
                   help="% of Week 1 paid players who buy Week 2 pass.")
     with w2c4:
+        st.metric(
+            "Blended RTP",
+            f"{w2_rtp:.0f}%",
+            help="Total Blended Payout (accrued) / Total Blended Income × 100."
+        )
+    with w2c5:
+        st.metric(
+            "Paid RTP",
+            f"{w2_paid_rtp:.0f}%",
+            help="Total Paid Payout (accrued) / Total Paid Income × 100. Paid segments only (converters + repurchasers)."
+        )
+    with w2c6:
         st.metric(
             "W2 Overall Position",
             f"\u00a3{w2_overall:.2f}",
@@ -1225,6 +1266,10 @@ with tab_w2:
             "Carryover Wallet": st.column_config.TextColumn(
                 "Carryover Wallet",
                 help="Weighted wallet balance carried over from Week 1. This is the starting balance before Week 2 steps begin."
+            ),
+            "W2 Accrued": st.column_config.TextColumn(
+                "W2 Accrued",
+                help="Prizes accrued during Week 2 steps only (excludes carryover). This is what drives the W2 RTP calculation."
             ),
             "Income": st.column_config.TextColumn(
                 "Income",
@@ -1268,8 +1313,8 @@ with tab_w2:
 
     def w2_stress_test(w2_results, w1_results, params, repurchase_override):
         stress_params = {**params, "w2_repurchase_rate": repurchase_override}
-        _, stress_overall, stress_rtp = compute_w2_economics(w2_results, w1_results, stress_params)
-        return stress_overall, stress_rtp
+        _, stress_overall, stress_rtp, stress_paid_rtp = compute_w2_economics(w2_results, w1_results, stress_params)
+        return stress_overall, stress_rtp, stress_paid_rtp
 
     w2_stress_scenarios = [
         (f"Current ({int(w2_repurchase_rate*100)}%)", w2_repurchase_rate),
@@ -1280,7 +1325,7 @@ with tab_w2:
 
     w2_stress_cols = st.columns(len(w2_stress_scenarios))
     for col, (label, rep_rate) in zip(w2_stress_cols, w2_stress_scenarios):
-        s_pos, s_rtp = w2_stress_test(w2_results, results, params, rep_rate)
+        s_pos, s_rtp, s_paid_rtp = w2_stress_test(w2_results, results, params, rep_rate)
         with col:
             st.metric(
                 label,
@@ -1288,7 +1333,7 @@ with tab_w2:
                 delta="Profit" if s_pos >= 0 else "Loss",
                 delta_color="normal" if s_pos >= 0 else "inverse",
             )
-            st.caption(f"RTP: {s_rtp:.0f}%")
+            st.caption(f"Blended RTP: {s_rtp:.0f}% | Paid RTP: {s_paid_rtp:.0f}%")
 
 
 # ===================================================================
@@ -1300,28 +1345,33 @@ with tab_combined:
 
     # Week 1 summary
     st.markdown("#### Week 1 Summary")
-    comb_w1_cols = st.columns(3)
+    comb_w1_cols = st.columns(4)
     with comb_w1_cols[0]:
         st.metric("W1 Overall Position", f"\u00a3{overall_position:.2f}",
                   help="Week 1 blended profit/loss per player.")
     with comb_w1_cols[1]:
-        st.metric("W1 RTP", f"{calculated_rtp:.0f}%",
-                  help="Week 1 actual Return to Player.")
+        st.metric("W1 Blended RTP", f"{calculated_rtp:.0f}%",
+                  help="Total Blended Payout (accrued) / Total Blended Income × 100.")
     with comb_w1_cols[2]:
+        st.metric("W1 Paid RTP", f"{paid_rtp:.0f}%",
+                  help="Total Paid Payout (accrued) / Total Paid Income × 100.")
+    with comb_w1_cols[3]:
         st.metric("W1 Pass Price", f"\u00a3{price_point:.2f}",
                   help="Week 1 premium pass price.")
 
     # Week 2 summary
     st.markdown("#### Week 2 Summary")
-    comb_w2_cols = st.columns(3)
+    comb_w2_cols = st.columns(4)
     with comb_w2_cols[0]:
         st.metric("W2 Overall Position", f"\u00a3{w2_overall:.2f}",
                   help="Week 2 blended profit/loss per player.")
     with comb_w2_cols[1]:
-        w2_rtp_display = f"{w2_rtp:.0f}%" if w2_rtp > 0 else "N/A"
-        st.metric("W2 RTP", w2_rtp_display,
-                  help="Week 2 actual Return to Player (based on paid segments only).")
+        st.metric("W2 Blended RTP", f"{w2_rtp:.0f}%",
+                  help="Total Blended Payout (accrued) / Total Blended Income × 100.")
     with comb_w2_cols[2]:
+        st.metric("W2 Paid RTP", f"{w2_paid_rtp:.0f}%",
+                  help="Total Paid Payout (accrued) / Total Paid Income × 100.")
+    with comb_w2_cols[3]:
         st.metric("W2 Pass Price", f"\u00a3{w2_price_point:.2f}",
                   help="Week 2 premium pass price.")
 
@@ -1711,7 +1761,6 @@ if save_clicked and save_name.strip():
         "price_point": price_point,
         "platform_take_pct": int(platform_take * 100),
         "paypal_fee": paypal_fee,
-        "target_rtp_pct": int(target_rtp * 100),
         "retention_free_pct": int(retention_free * 100),
         "retention_paid_pct": int(retention_paid * 100),
         "paid_conversion_pct": paid_conversion_pct,
