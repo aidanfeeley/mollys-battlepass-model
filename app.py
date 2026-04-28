@@ -310,7 +310,8 @@ w2_free_conversion = st.sidebar.slider(
     key="w2_free_conv_slider"
 ) / 100
 
-_w2_paid_defaults = [95, 80, 55, 30]  # Higher than W1 — repurchasers are self-selected engaged
+_w2_paid_defaults = [95, 80, 55, 30]
+_w2_repurchaser_defaults = [97, 85, 65, 40]  # Repurchasers are more engaged — bought twice
 
 with st.sidebar.expander("W2 Step Completion", expanded=False):
     st.caption(f"% of Week 2 players reaching each milestone. Steps {', '.join(str(m) for m in milestones)}.")
@@ -328,17 +329,30 @@ with st.sidebar.expander("W2 Step Completion", expanded=False):
             key=f"w2_free_comp_{ms}"
         ) / 100
 
-    st.markdown("**Paid Players** *(higher defaults — self-selected engaged cohort)*")
+    st.markdown("**Paid Converters** *(free players who buy W2)*")
     w2_paid_completions = {}
     for i, ms in enumerate(milestones):
         _key = f"w2_paid_step{ms}"
         _step_size = 5 if i < 3 else 1
         _def_val = get_default(_key, _w2_paid_defaults[i], _w2_paid_defaults[i])
         w2_paid_completions[ms] = st.slider(
-            f"W2 Paid \u2192 Step {ms}", 0, 100,
+            f"W2 Converter \u2192 Step {ms}", 0, 100,
             _def_val, _step_size,
-            help=f"% of Week 2 paid players reaching step {ms}",
+            help=f"% of Week 2 paid converters reaching step {ms}",
             key=f"w2_paid_comp_{ms}"
+        ) / 100
+
+    st.markdown("**Repurchasers** *(W1 paid who buy again — most engaged)*")
+    w2_repurchaser_completions = {}
+    for i, ms in enumerate(milestones):
+        _key = f"w2_repurchaser_step{ms}"
+        _step_size = 5 if i < 3 else 1
+        _def_val = get_default(_key, _w2_repurchaser_defaults[i], _w2_repurchaser_defaults[i])
+        w2_repurchaser_completions[ms] = st.slider(
+            f"W2 Repurchaser \u2192 Step {ms}", 0, 100,
+            _def_val, _step_size,
+            help=f"% of Week 2 repurchasers reaching step {ms}",
+            key=f"w2_repurchaser_comp_{ms}"
         ) / 100
 
 st.sidebar.markdown("---")
@@ -435,6 +449,57 @@ def compute_model_from_df(df, params):
         results.append(r)
 
     return results
+
+
+def build_revenue_waterfall(paid_wallet, platform_fee, paypal_fee, pass_price, free_wallet):
+    """Build a waterfall chart showing where the pass price goes.
+
+    Starts at pass price, subtracts each cost, lands on profit.
+    Free wallet shown as additional liability beyond the pass price.
+
+    Args:
+        paid_wallet: paid wallet accrued amount
+        platform_fee: platform fee amount
+        paypal_fee: PayPal fee amount
+        pass_price: gross pass price
+        free_wallet: free wallet accrued (unfunded liability)
+    """
+    profit = pass_price - platform_fee - paypal_fee - paid_wallet
+    net_position = profit - free_wallet
+    pct = lambda v: f"{abs(v) / pass_price * 100:.0f}%"
+
+    fig = go.Figure(go.Waterfall(
+        orientation="v",
+        measure=["absolute", "relative", "relative", "relative", "relative", "total"],
+        x=["Pass Price", "Platform Fee", "PayPal Fee", "Payout (RTP)",
+           "Free Player<br>Liability", "Net Position"],
+        y=[pass_price, -platform_fee, -paypal_fee, -paid_wallet, -free_wallet, 0],
+        text=[
+            f"£{pass_price:.2f}",
+            f"−£{platform_fee:.2f} ({pct(platform_fee)})",
+            f"−£{paypal_fee:.2f} ({pct(paypal_fee)})",
+            f"−£{paid_wallet:.2f} ({pct(paid_wallet)})",
+            f"−£{free_wallet:.2f}",
+            f"£{net_position:.2f}",
+        ],
+        textposition="outside",
+        textfont=dict(size=13),
+        connector=dict(line=dict(color="rgba(255,255,255,0.3)", width=1)),
+        increasing=dict(marker=dict(color="#2ecc71")),
+        decreasing=dict(marker=dict(color="#e74c3c")),
+        totals=dict(marker=dict(color="#2ecc71" if net_position >= 0 else "#e74c3c")),
+    ))
+
+    # Bold zero line so it's clear when the model goes negative
+    fig.add_hline(y=0, line_width=2.5, line_color="rgba(255,255,255,0.8)")
+
+    fig.update_layout(
+        yaxis_title="Amount (£)",
+        height=420,
+        template="plotly_white",
+        showlegend=False,
+    )
+    return fig
 
 
 def compute_weighted_wallet(results, step_completions, wallet_key):
@@ -635,6 +700,7 @@ def compute_w2_economics(w2_results, w1_results, params):
     # W2 wallet accrued (prizes earned during W2 only, no carryover) — for RTP
     w2_free_accrued = compute_weighted_wallet(w2_results, params["w2_free_completions"], "w_fe")
     w2_paid_accrued = compute_weighted_wallet(w2_results, params["w2_paid_completions"], "w_pe")
+    w2_repurchaser_accrued = compute_weighted_wallet(w2_results, params["w2_repurchaser_completions"], "w_pe")
 
     # 4 segments: (name, incidence, income, starting_wallet, wallet_key, step_completions, w2_accrued)
     segments = [
@@ -662,8 +728,8 @@ def compute_w2_economics(w2_results, w1_results, params):
             w2_net_income,
             w1_paid_wallet,
             "w_pe",
-            params["w2_paid_completions"],
-            w2_paid_accrued,
+            params["w2_repurchaser_completions"],
+            w2_repurchaser_accrued,
         ),
         (
             "W1 Paid \u2192 W2 Free",
@@ -683,6 +749,9 @@ def compute_w2_economics(w2_results, w1_results, params):
     # Paid-tier RTP: only paid segments
     paid_rtp_payout = 0.0
     paid_rtp_income = 0.0
+    # Repurchaser RTP: only the "Paid → Repurchase" segment
+    repurchaser_rtp_payout = 0.0
+    repurchaser_rtp_income = 0.0
     rows = []
 
     for name, incidence, income, starting_wallet, wallet_key, step_comps, w2_accrued in segments:
@@ -703,6 +772,11 @@ def compute_w2_economics(w2_results, w1_results, params):
             paid_rtp_payout += w2_accrued * incidence
             paid_rtp_income += income * incidence
 
+        # Repurchaser RTP: only the repurchase segment
+        if "Repurchase" in name:
+            repurchaser_rtp_payout = w2_accrued
+            repurchaser_rtp_income = income
+
         rows.append({
             "Segment": name,
             "Carryover Wallet": f"\u00a3{starting_wallet:.2f}",
@@ -717,8 +791,9 @@ def compute_w2_economics(w2_results, w1_results, params):
 
     blended_rtp = (total_rtp_payout / total_rtp_income * 100) if total_rtp_income > 0 else 0.0
     paid_rtp = (paid_rtp_payout / paid_rtp_income * 100) if paid_rtp_income > 0 else 0.0
+    repurchaser_rtp = (repurchaser_rtp_payout / repurchaser_rtp_income * 100) if repurchaser_rtp_income > 0 else 0.0
 
-    return rows, overall, blended_rtp, paid_rtp
+    return rows, overall, blended_rtp, paid_rtp, repurchaser_rtp
 
 
 # Build params
@@ -741,6 +816,7 @@ params = {
     "w2_free_conversion": w2_free_conversion,
     "w2_free_completions": w2_free_completions,
     "w2_paid_completions": w2_paid_completions,
+    "w2_repurchaser_completions": w2_repurchaser_completions,
 }
 
 if is_revised:
@@ -877,13 +953,13 @@ with tab_w1:
         st.metric(
             "Blended RTP",
             f"{calculated_rtp:.0f}%",
-            help="Total Blended Payout (accrued) / Total Blended Income × 100. Payout = prizes accrued in wallet across all segments."
+            help="Total Blended Payout (accrued) / Total Blended Net Income × 100. Net Income = Pass Price × (1 − Platform%) − PayPal Fee. Payout = prizes accrued in wallet across all segments."
         )
     with c4:
         st.metric(
             "Paid RTP",
             f"{paid_rtp:.0f}%",
-            help="Total Paid Payout (accrued) / Total Paid Income × 100. Paid segments only."
+            help="Total Paid Payout (accrued) / Total Paid Net Income × 100. Paid segments only."
         )
     with c5:
         if is_revised:
@@ -959,7 +1035,7 @@ with tab_w1:
             ),
             "Expected Payout": st.column_config.TextColumn(
                 "Expected Payout",
-                help="Weighted Wallet x D7 Cashout Rate. What the house actually pays out."
+                help="Weighted Wallet x Cashout Rate. What the house actually pays out."
             ),
             "Net Position": st.column_config.TextColumn(
                 "Net Position",
@@ -1105,6 +1181,28 @@ with tab_w1:
         fig_prize.update_yaxes(title_text="Prize Value (\u00a3)", secondary_y=False)
         st.plotly_chart(fig_prize, use_container_width=True)
 
+        # Revenue waterfall: where does £9.99 go?
+        st.subheader(f"Where Does Each £{price_point:.2f} Go?")
+        st.caption(
+            "Pass Price → subtract fees → subtract payout (wallet accrued to paid players) → Profit → subtract free player liability → Net Position. "
+            "This is a liability view (all wallet accrued). Does not account for breakage — players who churn before cashing out reduce actual cost. "
+            "A negative Net Position here can still be profitable long-term once retention and breakage are factored in."
+        )
+
+        w1_platform_fee = price_point * platform_take
+        w1_paypal = paypal_fee
+        w1_paid_wallet = compute_weighted_wallet(results, params["paid_completions"], "w_pe")
+        w1_free_wallet = compute_weighted_wallet(results, params["free_completions"], "w_fe")
+
+        fig_rev = build_revenue_waterfall(
+            paid_wallet=w1_paid_wallet,
+            platform_fee=w1_platform_fee,
+            paypal_fee=w1_paypal,
+            pass_price=price_point,
+            free_wallet=w1_free_wallet,
+        )
+        st.plotly_chart(fig_rev, use_container_width=True)
+
 
 # ===================================================================
 # TAB 2: WEEK 2
@@ -1218,12 +1316,12 @@ with tab_w2:
         "Expected payout is weighted by step completion distribution."
     )
 
-    w2_econ_rows, w2_overall, w2_rtp, w2_paid_rtp = compute_w2_economics(w2_results, results, params)
+    w2_econ_rows, w2_overall, w2_rtp, w2_paid_rtp, w2_repurchaser_rtp = compute_w2_economics(w2_results, results, params)
 
     w2_net_rev = w2_price_point * (1 - platform_take) - paypal_fee
 
     # Key metrics for Week 2
-    w2c1, w2c2, w2c3, w2c4, w2c5, w2c6 = st.columns(6)
+    w2c1, w2c2, w2c3, w2c4, w2c5, w2c5b, w2c6 = st.columns(7)
     with w2c1:
         st.metric("W2 Pass Price", f"\u00a3{w2_price_point:.2f}",
                   help="Gross price of the Week 2 premium pass.")
@@ -1237,13 +1335,19 @@ with tab_w2:
         st.metric(
             "Blended RTP",
             f"{w2_rtp:.0f}%",
-            help="Total Blended Payout (accrued) / Total Blended Income × 100."
+            help="Total Blended Payout (accrued) / Total Blended Net Income × 100."
         )
     with w2c5:
         st.metric(
             "Paid RTP",
             f"{w2_paid_rtp:.0f}%",
-            help="Total Paid Payout (accrued) / Total Paid Income × 100. Paid segments only (converters + repurchasers)."
+            help="Total Paid Payout (accrued) / Total Paid Net Income × 100. Paid segments only (converters + repurchasers)."
+        )
+    with w2c5b:
+        st.metric(
+            "Repurchaser RTP",
+            f"{w2_repurchaser_rtp:.0f}%",
+            help="Repurchaser Payout (accrued) / Repurchaser Net Income × 100. W1 Paid → W2 Repurchase segment only."
         )
     with w2c6:
         st.metric(
@@ -1313,7 +1417,7 @@ with tab_w2:
 
     def w2_stress_test(w2_results, w1_results, params, repurchase_override):
         stress_params = {**params, "w2_repurchase_rate": repurchase_override}
-        _, stress_overall, stress_rtp, stress_paid_rtp = compute_w2_economics(w2_results, w1_results, stress_params)
+        _, stress_overall, stress_rtp, stress_paid_rtp, _ = compute_w2_economics(w2_results, w1_results, stress_params)
         return stress_overall, stress_rtp, stress_paid_rtp
 
     w2_stress_scenarios = [
@@ -1335,6 +1439,120 @@ with tab_w2:
             )
             st.caption(f"Blended RTP: {s_rtp:.0f}% | Paid RTP: {s_paid_rtp:.0f}%")
 
+    # ===================================================================
+    # WEEK 2 CHARTS (collapsed by default)
+    # ===================================================================
+    st.markdown("---")
+    with st.expander("Charts", expanded=False):
+        st.subheader("W2 Expected Wallet Progression (Engaged Players)")
+        st.caption("Cumulative wallet for a player who reaches every W2 step. Excludes carryover from Week 1.")
+
+        fig_w2_wallet = go.Figure()
+        fig_w2_wallet.add_trace(go.Scatter(
+            x=[r["step"] for r in w2_results],
+            y=[r["w_fe"] for r in w2_results],
+            name="Free Engaged",
+            mode="lines+markers",
+            line=dict(color="#636EFA"),
+        ))
+        fig_w2_wallet.add_trace(go.Scatter(
+            x=[r["step"] for r in w2_results],
+            y=[r["w_pe"] for r in w2_results],
+            name="Paid Engaged",
+            mode="lines+markers",
+            line=dict(color="#EF553B"),
+        ))
+
+        fig_w2_wallet.add_hline(
+            y=w2_net_rev,
+            line_dash="dash",
+            line_color="green",
+            annotation_text=f"Net Revenue (\u00a3{w2_net_rev:.2f})",
+        )
+
+        fig_w2_wallet.update_layout(
+            xaxis_title="Step",
+            yaxis_title="Expected Wallet (\u00a3)",
+            height=400,
+            template="plotly_white",
+        )
+        st.plotly_chart(fig_w2_wallet, use_container_width=True, key="w2_wallet_chart")
+
+        # W2 Win probability chart
+        st.subheader("W2 Win Probability by Step")
+
+        w2_instant_steps = [r for r in w2_results if r["type"] != "Sweepstakes"]
+        w2_colors = ["#2ecc71" if r["win_chance_effective"] >= 1.0
+                     else "#3498db" if r["win_chance_effective"] > 0.05
+                     else "#95a5a6"
+                     for r in w2_instant_steps]
+
+        fig_w2_win = go.Figure()
+        fig_w2_win.add_trace(go.Bar(
+            x=[r["step"] for r in w2_instant_steps],
+            y=[r["win_chance_effective"] * 100 for r in w2_instant_steps],
+            marker_color=w2_colors,
+            name="Win % (effective)",
+        ))
+        fig_w2_win.update_layout(
+            xaxis_title="Step",
+            yaxis_title="Win Chance (%)",
+            height=350,
+            template="plotly_white",
+            yaxis=dict(range=[0, 105]),
+        )
+        st.plotly_chart(fig_w2_win, use_container_width=True, key="w2_win_chart")
+
+        # W2 Prize value chart
+        st.subheader("W2 Prize Values by Step")
+
+        fig_w2_prize = make_subplots(specs=[[{"secondary_y": True}]])
+        fig_w2_prize.add_trace(go.Bar(
+            x=[r["step"] for r in w2_instant_steps],
+            y=[r["free_prize"] for r in w2_instant_steps],
+            name="Free Prize",
+            marker_color="#636EFA",
+            opacity=0.7,
+        ), secondary_y=False)
+        fig_w2_prize.add_trace(go.Bar(
+            x=[r["step"] for r in w2_instant_steps],
+            y=[r["paid_prize"] for r in w2_instant_steps],
+            name="Paid Prize",
+            marker_color="#EF553B",
+            opacity=0.7,
+        ), secondary_y=False)
+        fig_w2_prize.update_layout(
+            xaxis_title="Step",
+            height=350,
+            template="plotly_white",
+            barmode="group",
+        )
+        fig_w2_prize.update_yaxes(title_text="Prize Value (\u00a3)", secondary_y=False)
+        st.plotly_chart(fig_w2_prize, use_container_width=True, key="w2_prize_chart")
+
+        # W2 Revenue waterfall: where does £9.99 go?
+        st.subheader(f"Where Does Each £{w2_price_point:.2f} Go?")
+        w2_platform_fee_amt = w2_price_point * platform_take
+        w2_paypal_amt = paypal_fee
+        w2_converter_wallet = compute_weighted_wallet(w2_results, params["w2_paid_completions"], "w_pe")
+        w2_repurchaser_wallet = compute_weighted_wallet(w2_results, params["w2_repurchaser_completions"], "w_pe")
+        w2_free_wallet = compute_weighted_wallet(w2_results, params["w2_free_completions"], "w_fe")
+
+        st.caption(
+            f"Pass Price → fees → payout → Profit → free liability → Net Position. "
+            f"Uses converter payout (£{w2_converter_wallet:.2f}); repurchasers accrue £{w2_repurchaser_wallet:.2f}. "
+            f"Liability view — does not account for breakage. Negative Net Position can still be profitable long-term."
+        )
+
+        fig_w2_rev = build_revenue_waterfall(
+            paid_wallet=w2_converter_wallet,
+            platform_fee=w2_platform_fee_amt,
+            paypal_fee=w2_paypal_amt,
+            pass_price=w2_price_point,
+            free_wallet=w2_free_wallet,
+        )
+        st.plotly_chart(fig_w2_rev, use_container_width=True, key="w2_rev_chart")
+
 
 # ===================================================================
 # TAB 3: COMBINED
@@ -1351,27 +1569,30 @@ with tab_combined:
                   help="Week 1 blended profit/loss per player.")
     with comb_w1_cols[1]:
         st.metric("W1 Blended RTP", f"{calculated_rtp:.0f}%",
-                  help="Total Blended Payout (accrued) / Total Blended Income × 100.")
+                  help="Total Blended Payout (accrued) / Total Blended Net Income × 100.")
     with comb_w1_cols[2]:
         st.metric("W1 Paid RTP", f"{paid_rtp:.0f}%",
-                  help="Total Paid Payout (accrued) / Total Paid Income × 100.")
+                  help="Total Paid Payout (accrued) / Total Paid Net Income × 100.")
     with comb_w1_cols[3]:
         st.metric("W1 Pass Price", f"\u00a3{price_point:.2f}",
                   help="Week 1 premium pass price.")
 
     # Week 2 summary
     st.markdown("#### Week 2 Summary")
-    comb_w2_cols = st.columns(4)
+    comb_w2_cols = st.columns(5)
     with comb_w2_cols[0]:
         st.metric("W2 Overall Position", f"\u00a3{w2_overall:.2f}",
                   help="Week 2 blended profit/loss per player.")
     with comb_w2_cols[1]:
         st.metric("W2 Blended RTP", f"{w2_rtp:.0f}%",
-                  help="Total Blended Payout (accrued) / Total Blended Income × 100.")
+                  help="Total Blended Payout (accrued) / Total Blended Net Income × 100.")
     with comb_w2_cols[2]:
         st.metric("W2 Paid RTP", f"{w2_paid_rtp:.0f}%",
-                  help="Total Paid Payout (accrued) / Total Paid Income × 100.")
+                  help="Total Paid Payout (accrued) / Total Paid Net Income × 100.")
     with comb_w2_cols[3]:
+        st.metric("W2 Repurchaser RTP", f"{w2_repurchaser_rtp:.0f}%",
+                  help="Repurchaser Payout (accrued) / Repurchaser Net Income × 100. W1 Paid → W2 Repurchase segment only.")
+    with comb_w2_cols[4]:
         st.metric("W2 Pass Price", f"\u00a3{w2_price_point:.2f}",
                   help="Week 2 premium pass price.")
 
@@ -1398,6 +1619,44 @@ with tab_combined:
         st.error(f"Combined position: **\u00a3{combined_position:.2f}** per player across both weeks. The model is losing money.")
     else:
         st.success(f"Combined position: **\u00a3{combined_position:.2f}** per player across both weeks. The model is profitable.")
+
+    # Combined Revenue Breakdown — W1 and W2 side by side
+    with st.expander("Where Does Each Pass Price Go?", expanded=False):
+        st.caption(
+            "Per paid user: Pass Price → fees → payout → Profit → free liability → Net Position. "
+            "Liability view — does not account for breakage. Negative Net Position can still be profitable long-term."
+        )
+        comb_rev_col1, comb_rev_col2 = st.columns(2)
+
+        # W1 breakdown
+        comb_w1_paid_wallet = compute_weighted_wallet(results, params["paid_completions"], "w_pe")
+        comb_w1_free_wallet = compute_weighted_wallet(results, params["free_completions"], "w_fe")
+
+        with comb_rev_col1:
+            st.markdown("**Week 1**")
+            fig_comb_w1_rev = build_revenue_waterfall(
+                paid_wallet=comb_w1_paid_wallet,
+                platform_fee=price_point * platform_take,
+                paypal_fee=paypal_fee,
+                pass_price=price_point,
+                free_wallet=comb_w1_free_wallet,
+            )
+            st.plotly_chart(fig_comb_w1_rev, use_container_width=True, key="comb_w1_rev_chart")
+
+        # W2 breakdown
+        comb_w2_converter_wallet = compute_weighted_wallet(w2_results, params["w2_paid_completions"], "w_pe")
+        comb_w2_free_wallet = compute_weighted_wallet(w2_results, params["w2_free_completions"], "w_fe")
+
+        with comb_rev_col2:
+            st.markdown("**Week 2**")
+            fig_comb_w2_rev = build_revenue_waterfall(
+                paid_wallet=comb_w2_converter_wallet,
+                platform_fee=w2_price_point * platform_take,
+                paypal_fee=paypal_fee,
+                pass_price=w2_price_point,
+                free_wallet=comb_w2_free_wallet,
+            )
+            st.plotly_chart(fig_comb_w2_rev, use_container_width=True, key="comb_w2_rev_chart")
 
     # ===================================================================
     # MULTI-WEEK CARRYOVER ANALYSIS (Real Retention Curve)
@@ -1610,7 +1869,7 @@ with tab_combined:
             "Segment": st.column_config.TextColumn(help="Player segment."),
             f"Balance (S{num_seasons})": st.column_config.TextColumn(
                 help="Remaining wallet balance. If below the cashout threshold, this is breakage — money won but not yet withdrawable."),
-            "Cum. Income": st.column_config.TextColumn(help="Total gross income across all simulated weeks."),
+            "Cum. Income": st.column_config.TextColumn(help="Total net income (after platform take and PayPal fee) across all simulated weeks."),
             "Cum. Payout": st.column_config.TextColumn(help="Total paid out across all weeks (only when balance hits cashout threshold)."),
             "Net Position": st.column_config.TextColumn(help="Cumulative Income - Cumulative Payout."),
             "Incidence": st.column_config.TextColumn(help="Segment weight in the player base."),
@@ -1778,6 +2037,8 @@ if save_clicked and save_name.strip():
         settings_to_save[f"w2_free_step{ms}"] = int(val * 100)
     for ms, val in w2_paid_completions.items():
         settings_to_save[f"w2_paid_step{ms}"] = int(val * 100)
+    for ms, val in w2_repurchaser_completions.items():
+        settings_to_save[f"w2_repurchaser_step{ms}"] = int(val * 100)
     if is_revised:
         settings_to_save.update({
             "win_steps": win_steps,
