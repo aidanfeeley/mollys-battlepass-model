@@ -451,43 +451,45 @@ def compute_model_from_df(df, params):
     return results
 
 
-def build_revenue_waterfall(paid_wallet, platform_fee, paypal_fee, pass_price, free_wallet):
-    """Build a waterfall chart showing where the pass price goes.
+def build_revenue_waterfall(pass_price, paid_frac, platform_fee_per_user, paypal_fee_per_user, overall_position):
+    """Build a blended per-player waterfall matching the Overall Position metric.
 
-    Starts at pass price, subtracts each cost, lands on profit.
-    Free wallet shown as additional liability beyond the pass price.
+    Starts from blended revenue (pass price x conversion), subtracts fees and payout.
+    First bar annotated to show derivation from pass price.
+    Payout is derived so the total always equals overall_position exactly.
 
     Args:
-        paid_wallet: paid wallet accrued amount
-        platform_fee: platform fee amount
-        paypal_fee: PayPal fee amount
-        pass_price: gross pass price
-        free_wallet: free wallet accrued (unfunded liability)
+        pass_price: gross pass price (e.g. £9.99)
+        paid_frac: fraction of players who pay (paid incidence, 0-1)
+        platform_fee_per_user: platform fee per paid user (pass_price × platform_take)
+        paypal_fee_per_user: PayPal fee per paid user
+        overall_position: the P&L overall position metric (target total)
     """
-    profit = pass_price - platform_fee - paypal_fee - paid_wallet
-    net_position = profit - free_wallet
-    pct = lambda v: f"{abs(v) / pass_price * 100:.0f}%"
+    blended_revenue = pass_price * paid_frac
+    platform_fee = platform_fee_per_user * paid_frac
+    paypal_fee = paypal_fee_per_user * paid_frac
+    total_payout = blended_revenue - platform_fee - paypal_fee - overall_position
+    pct = lambda v: f"{abs(v) / blended_revenue * 100:.0f}%" if blended_revenue > 0 else "0%"
 
     fig = go.Figure(go.Waterfall(
         orientation="v",
-        measure=["absolute", "relative", "relative", "relative", "relative", "total"],
-        x=["Pass Price", "Platform Fee", "PayPal Fee", "Payout (RTP)",
-           "Free Player<br>Liability", "Net Position"],
-        y=[pass_price, -platform_fee, -paypal_fee, -paid_wallet, -free_wallet, 0],
+        measure=["absolute", "relative", "relative", "relative", "total"],
+        x=["Revenue", "Platform Fee", "PayPal Fee", "Payout",
+           "Overall Position"],
+        y=[blended_revenue, -platform_fee, -paypal_fee, -total_payout, 0],
         text=[
-            f"£{pass_price:.2f}",
+            f"£{pass_price:.2f} x {paid_frac*100:.0f}% = £{blended_revenue:.2f}",
             f"−£{platform_fee:.2f} ({pct(platform_fee)})",
             f"−£{paypal_fee:.2f} ({pct(paypal_fee)})",
-            f"−£{paid_wallet:.2f} ({pct(paid_wallet)})",
-            f"−£{free_wallet:.2f}",
-            f"£{net_position:.2f}",
+            f"−£{total_payout:.2f} ({pct(total_payout)})",
+            f"£{overall_position:.2f}",
         ],
         textposition="outside",
         textfont=dict(size=13),
         connector=dict(line=dict(color="rgba(255,255,255,0.3)", width=1)),
         increasing=dict(marker=dict(color="#2ecc71")),
         decreasing=dict(marker=dict(color="#e74c3c")),
-        totals=dict(marker=dict(color="#2ecc71" if net_position >= 0 else "#e74c3c")),
+        totals=dict(marker=dict(color="#2ecc71" if overall_position >= 0 else "#e74c3c")),
     ))
 
     # Bold zero line so it's clear when the model goes negative
@@ -1185,24 +1187,18 @@ with tab_w1:
         st.plotly_chart(fig_prize, use_container_width=True)
 
         # Revenue waterfall: where does £9.99 go?
-        st.subheader(f"Where Does Each £{price_point:.2f} Go?")
+        st.subheader("Where Does the Money Go?")
         st.caption(
-            "Pass Price → subtract fees → subtract payout (wallet accrued to paid players) → Profit → subtract free player liability → Net Position. "
-            "This is a liability view (all wallet accrued). Does not account for breakage — players who churn before cashing out reduce actual cost. "
-            "A negative Net Position here can still be profitable long-term once retention and breakage are factored in."
+            "Revenue = pass price x paid conversion rate. Fees and payout subtracted from blended revenue. "
+            "Overall Position matches the metric above."
         )
 
-        w1_platform_fee = price_point * platform_take
-        w1_paypal = paypal_fee
-        w1_paid_wallet = compute_weighted_wallet(results, params["paid_completions"], "w_pe")
-        w1_free_wallet = compute_weighted_wallet(results, params["free_completions"], "w_fe")
-
         fig_rev = build_revenue_waterfall(
-            paid_wallet=w1_paid_wallet,
-            platform_fee=w1_platform_fee,
-            paypal_fee=w1_paypal,
             pass_price=price_point,
-            free_wallet=w1_free_wallet,
+            paid_frac=params["paid_conversion_pct"] / 100,
+            platform_fee_per_user=price_point * platform_take,
+            paypal_fee_per_user=paypal_fee,
+            overall_position=overall_position,
         )
         st.plotly_chart(fig_rev, use_container_width=True)
 
@@ -1533,26 +1529,23 @@ with tab_w2:
         fig_w2_prize.update_yaxes(title_text="Prize Value (\u00a3)", secondary_y=False)
         st.plotly_chart(fig_w2_prize, use_container_width=True, key="w2_prize_chart")
 
-        # W2 Revenue waterfall: where does £9.99 go?
-        st.subheader(f"Where Does Each £{w2_price_point:.2f} Go?")
-        w2_platform_fee_amt = w2_price_point * platform_take
-        w2_paypal_amt = paypal_fee
-        w2_converter_wallet = compute_weighted_wallet(w2_results, params["w2_paid_completions"], "w_pe")
-        w2_repurchaser_wallet = compute_weighted_wallet(w2_results, params["w2_repurchaser_completions"], "w_pe")
-        w2_free_wallet = compute_weighted_wallet(w2_results, params["w2_free_completions"], "w_fe")
+        # W2 Revenue waterfall
+        st.subheader("Where Does the Money Go?")
+        # W2 paid incidence = converters + repurchasers
+        w2_paid_frac = (params["free_pct"] / 100 * params["w2_free_conversion"]) + \
+                       (params["paid_conversion_pct"] / 100 * params["w2_repurchase_rate"])
 
         st.caption(
-            f"Pass Price → fees → payout → Profit → free liability → Net Position. "
-            f"Uses converter payout (£{w2_converter_wallet:.2f}); repurchasers accrue £{w2_repurchaser_wallet:.2f}. "
-            f"Liability view — does not account for breakage. Negative Net Position can still be profitable long-term."
+            "Revenue = pass price x paid conversion rate. Fees and payout subtracted from blended revenue. "
+            "Overall Position matches the metric above."
         )
 
         fig_w2_rev = build_revenue_waterfall(
-            paid_wallet=w2_converter_wallet,
-            platform_fee=w2_platform_fee_amt,
-            paypal_fee=w2_paypal_amt,
             pass_price=w2_price_point,
-            free_wallet=w2_free_wallet,
+            paid_frac=w2_paid_frac,
+            platform_fee_per_user=w2_price_point * platform_take,
+            paypal_fee_per_user=paypal_fee,
+            overall_position=w2_overall,
         )
         st.plotly_chart(fig_w2_rev, use_container_width=True, key="w2_rev_chart")
 
@@ -1624,40 +1617,35 @@ with tab_combined:
         st.success(f"Combined position: **\u00a3{combined_position:.2f}** per player across both weeks. The model is profitable.")
 
     # Combined Revenue Breakdown — W1 and W2 side by side
-    with st.expander("Where Does Each Pass Price Go?", expanded=False):
+    with st.expander("Where Does the Money Go?", expanded=False):
         st.caption(
-            "Per paid user: Pass Price → fees → payout → Profit → free liability → Net Position. "
-            "Liability view — does not account for breakage. Negative Net Position can still be profitable long-term."
+            "Revenue = pass price x paid conversion rate. Fees and payout subtracted from blended revenue. "
+            "Overall Position matches the metrics above."
         )
         comb_rev_col1, comb_rev_col2 = st.columns(2)
 
-        # W1 breakdown
-        comb_w1_paid_wallet = compute_weighted_wallet(results, params["paid_completions"], "w_pe")
-        comb_w1_free_wallet = compute_weighted_wallet(results, params["free_completions"], "w_fe")
+        comb_w2_paid_frac = (params["free_pct"] / 100 * params["w2_free_conversion"]) + \
+                            (params["paid_conversion_pct"] / 100 * params["w2_repurchase_rate"])
 
         with comb_rev_col1:
             st.markdown("**Week 1**")
             fig_comb_w1_rev = build_revenue_waterfall(
-                paid_wallet=comb_w1_paid_wallet,
-                platform_fee=price_point * platform_take,
-                paypal_fee=paypal_fee,
                 pass_price=price_point,
-                free_wallet=comb_w1_free_wallet,
+                paid_frac=params["paid_conversion_pct"] / 100,
+                platform_fee_per_user=price_point * platform_take,
+                paypal_fee_per_user=paypal_fee,
+                overall_position=overall_position,
             )
             st.plotly_chart(fig_comb_w1_rev, use_container_width=True, key="comb_w1_rev_chart")
-
-        # W2 breakdown
-        comb_w2_converter_wallet = compute_weighted_wallet(w2_results, params["w2_paid_completions"], "w_pe")
-        comb_w2_free_wallet = compute_weighted_wallet(w2_results, params["w2_free_completions"], "w_fe")
 
         with comb_rev_col2:
             st.markdown("**Week 2**")
             fig_comb_w2_rev = build_revenue_waterfall(
-                paid_wallet=comb_w2_converter_wallet,
-                platform_fee=w2_price_point * platform_take,
-                paypal_fee=paypal_fee,
                 pass_price=w2_price_point,
-                free_wallet=comb_w2_free_wallet,
+                paid_frac=comb_w2_paid_frac,
+                platform_fee_per_user=w2_price_point * platform_take,
+                paypal_fee_per_user=paypal_fee,
+                overall_position=w2_overall,
             )
             st.plotly_chart(fig_comb_w2_rev, use_container_width=True, key="comb_w2_rev_chart")
 
